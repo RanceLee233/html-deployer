@@ -45,43 +45,24 @@ async function loadDeployedPages() {
 }
 
 function createPageElement(page) {
-    const card = document.createElement('div');
-    card.className = 'page-card';
-    card.dataset.pageId = page.id;
+    const div = document.createElement('div');
+    div.className = 'deployed-item';
+    div.dataset.pageId = page.id;
     
     const createdDate = new Date(page.createdAt).toLocaleString('zh-CN');
     
-    // 生成页面预览图（使用iframe预览）
-    const previewUrl = page.htmlHash ? `${API_BASE_URL.replace('/api', '')}/view/${page.htmlHash}` : '';
-    
-    card.innerHTML = `
-        <div class="page-card-preview">
-            ${page.htmlHash ? 
-                `<iframe src="${previewUrl}" class="page-preview-frame" sandbox="allow-same-origin allow-scripts"></iframe>` :
-                `<div class="preview-placeholder">页面预览</div>`
-            }
-        </div>
-        <div class="page-card-content">
-            <h3 class="page-title">${page.title || '无标题'}</h3>
-            <p class="page-description">${page.description || '无描述'}</p>
-            <div class="page-meta">
-                <span class="create-time">${createdDate}</span>
-            </div>
-        </div>
-        <div class="page-card-actions">
-            <button class="btn-view" onclick="viewPageByHash('${page.htmlHash}')">
-                <i>👁</i> 查看
-            </button>
-            <button class="btn-copy" onclick="copyShareLink('${page.shareUrl}')">
-                <i>🔗</i> 复制
-            </button>
-            <button class="btn-delete" onclick="deletePage('${page.id}')">
-                <i>🗑</i> 删除
-            </button>
+    div.innerHTML = `
+        <h3>${page.title || '无标题'}</h3>
+        <p class="description">${page.description || '无描述'}</p>
+        <p class="meta">创建时间: ${createdDate}</p>
+        <div class="item-actions">
+            <button class="btn-secondary" onclick="viewPageByHash('${page.htmlHash}')">查看页面</button>
+            <button class="btn-copy" onclick="copyShareLink('${page.shareUrl}')">复制链接</button>
+            <button class="btn-danger" onclick="deletePage('${page.id}')">删除</button>
         </div>
     `;
     
-    return card;
+    return div;
 }
 
 async function handleDeploy(event) {
