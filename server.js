@@ -3,8 +3,6 @@ const express = require('express');
 const { Client } = require('@notionhq/client');
 const cors = require('cors');
 const crypto = require('crypto');
-const fs = require('fs').promises;
-const path = require('path');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -192,11 +190,8 @@ app.post('/api/deploy', async (req, res) => {
     }
 
     try {
-        // 确保存储目录存在
-        await ensureStorageDir();
-        
-        // 生成HTML内容的哈希值并保存到文件系统
-        const htmlHash = await saveHtmlContent(htmlContent);
+        // 生成HTML内容的哈希值
+        const htmlHash = generateHash(htmlContent);
         
         // 生成唯一页面ID和分享URL
         const pageId = Date.now().toString(36) + Math.random().toString(36).substr(2);
@@ -319,12 +314,10 @@ app.get('/api/deployments/:id', async (req, res) => {
         let htmlHash = '';
         
         // 检查是新结构还是旧结构
-        if (properties['HTML哈希值']) {
-            // 新结构：有哈希值字段
+        if (properties['完整HTML内容']) {
+            // 新结构：直接存储完整HTML内容
+            htmlContent = properties['完整HTML内容']?.rich_text[0]?.plain_text || '';
             htmlHash = properties['HTML哈希值']?.rich_text[0]?.plain_text || '';
-            if (htmlHash) {
-                htmlContent = await getHtmlContent(htmlHash) || '';
-            }
         } else if (properties['HTML代码']) {
             // 旧结构：直接存储HTML代码
             htmlContent = properties['HTML代码']?.rich_text[0]?.plain_text || '';
@@ -358,15 +351,7 @@ app.delete('/api/deployments/:id', async (req, res) => {
         const pageResponse = await notion.pages.retrieve({ page_id: pageId });
         const properties = pageResponse.properties;
         
-        // 如果有哈希值字段，删除对应的HTML文件
-        if (properties['HTML哈希值']) {
-            const htmlHash = properties['HTML哈希值']?.rich_text[0]?.plain_text || '';
-            if (htmlHash) {
-                await deleteHtmlContent(htmlHash);
-            }
-        }
-        
-        // 归档Notion中的页面
+        // 直接归档Notion中的页面（不再需要删除文件）
         await notion.pages.update({
             page_id: pageId,
             archived: true
@@ -384,9 +369,18 @@ app.get('/view/:hash', async (req, res) => {
     const hash = req.params.hash;
     
     try {
-        const htmlContent = await getHtmlContent(hash);
+        // 通过哈希值查找对应的Notion页面
+        const response = await notion.databases.query({
+            database_id: databaseId,
+            filter: {
+                property: 'HTML哈希值',
+                rich_text: {
+                    equals: hash
+                }
+            }
+        });
         
-        if (!htmlContent) {
+        if (response.results.length === 0) {
             return res.status(404).send(`
                 <!DOCTYPE html>
                 <html lang="zh-CN">
@@ -405,6 +399,20 @@ app.get('/view/:hash', async (req, res) => {
                 </body>
                 </html>
             `);
+        }
+        
+        const page = response.results[0];
+        let htmlContent = '';
+        
+        // 优先使用完整HTML内容
+        if (page.properties['完整HTML内容']) {
+            htmlContent = page.properties['完整HTML内容']?.rich_text[0]?.plain_text || '';
+        } else if (page.properties['HTML代码']) {
+            htmlContent = page.properties['HTML代码']?.rich_text[0]?.plain_text || '';
+        }
+        
+        if (!htmlContent) {
+            return res.status(404).send('页面内容为空');
         }
         
         res.send(htmlContent);
