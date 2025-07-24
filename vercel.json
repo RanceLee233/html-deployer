@@ -12,7 +12,11 @@
       "dest": "/server.js"
     },
     {
-      "src": "/(.*)",
+      "src": "/",
+      "dest": "/index.html"
+    },
+    {
+      "src": "/(.*\\.(css|js|html))",
       "dest": "/$1"
     }
   ]
