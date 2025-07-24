@@ -17,7 +17,7 @@ app.use(express.json());
 // --- API 路由 ---
 
 // 1. 获取所有已部署的页面
-app.get('/pages', async (req, res) => {
+app.get('/api/deployments', async (req, res) => {
     try {
         const response = await notion.databases.query({
             database_id: databaseId,
@@ -48,7 +48,7 @@ app.get('/pages', async (req, res) => {
 });
 
 // 2. 创建一个新页面
-app.post('/pages', async (req, res) => {
+app.post('/api/deploy', async (req, res) => {
     const { title, htmlContent, description } = req.body;
 
     if (!title || !htmlContent) {
@@ -92,6 +92,35 @@ app.post('/pages', async (req, res) => {
     } catch (error) {
         console.error('创建页面失败:', error);
         res.status(500).json({ error: '无法在Notion中创建页面' });
+    }
+});
+
+// 3. 获取单个页面详情
+app.get('/api/deployments/:id', async (req, res) => {
+    const pageId = req.params.id;
+    
+    try {
+        const response = await notion.pages.retrieve({ page_id: pageId });
+        res.json(response);
+    } catch (error) {
+        console.error('获取页面详情失败:', error);
+        res.status(500).json({ error: '无法获取页面详情' });
+    }
+});
+
+// 4. 删除页面
+app.delete('/api/deployments/:id', async (req, res) => {
+    const pageId = req.params.id;
+    
+    try {
+        await notion.pages.update({
+            page_id: pageId,
+            archived: true
+        });
+        res.json({ success: true });
+    } catch (error) {
+        console.error('删除页面失败:', error);
+        res.status(500).json({ error: '无法删除页面' });
     }
 });
 

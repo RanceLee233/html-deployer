@@ -1,4 +1,7 @@
-const API_BASE_URL = 'http://localhost:3000/api';
+// 根据环境自动切换 API 地址
+const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+    ? 'http://localhost:3000/api'
+    : '/api';
 
 document.addEventListener('DOMContentLoaded', function() {
     loadDeployedPages();
