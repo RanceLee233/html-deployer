@@ -127,16 +127,23 @@ app.get('/api/deployments', async (req, res) => {
             ],
         });
 
-        // 格式化返回的数据
+        // 格式化返回的数据 - 兼容旧数据库结构
         const pages = response.results.map(page => {
+            const properties = page.properties;
+            
+            // 兼容旧字段和新字段
+            const hasNewStructure = properties['HTML哈希值'] !== undefined;
+            const hasOldStructure = properties['HTML代码'] !== undefined;
+            
             return {
                 id: page.id,
-                title: page.properties.页面标题.title[0]?.plain_text || '无标题',
-                htmlHash: page.properties.HTML哈希值.rich_text[0]?.plain_text || '',
-                description: page.properties.描述.rich_text[0]?.plain_text || '',
+                title: properties.页面标题?.title[0]?.plain_text || '无标题',
+                htmlHash: hasNewStructure ? properties['HTML哈希值']?.rich_text[0]?.plain_text || '' : '',
+                htmlContent: hasOldStructure ? properties['HTML代码']?.rich_text[0]?.plain_text || '' : '',
+                description: properties.描述?.rich_text[0]?.plain_text || '',
                 createdAt: page.created_time,
-                shareUrl: page.properties.分享链接.rich_text[0]?.plain_text || '',
-                pageId: page.properties.页面ID.rich_text[0]?.plain_text || ''
+                shareUrl: properties['分享链接']?.rich_text[0]?.plain_text || '',
+                pageId: properties['页面ID']?.rich_text[0]?.plain_text || ''
             };
         });
 
@@ -171,56 +178,81 @@ app.post('/api/deploy', async (req, res) => {
         const pageId = Date.now().toString(36) + Math.random().toString(36).substr(2);
         const shareUrl = `${req.protocol}://${req.get('host')}/view/${htmlHash}`;
         
-        // 在Notion中创建记录，只存储哈希值
+// 获取数据库结构以确定使用哪种字段
+        const database = await notion.databases.retrieve({
+            database_id: databaseId
+        });
+        
+        const hasNewStructure = database.properties['HTML哈希值'] !== undefined;
+        const properties = {
+            '页面标题': {
+                title: [
+                    {
+                        text: {
+                            content: title,
+                        },
+                    },
+                ],
+            },
+            '描述': {
+                rich_text: [
+                    {
+                        text: {
+                            content: description || '',
+                        },
+                    },
+                ],
+            },
+        };
+        
+        // 根据数据库结构选择字段
+        if (hasNewStructure) {
+            // 新架构：使用哈希值
+            properties['HTML哈希值'] = {
+                rich_text: [
+                    {
+                        text: {
+                            content: htmlHash,
+                        },
+                    },
+                ],
+            };
+            properties['页面ID'] = {
+                rich_text: [
+                    {
+                        text: {
+                            content: pageId,
+                        },
+                    },
+                ],
+            };
+            properties['分享链接'] = {
+                rich_text: [
+                    {
+                        text: {
+                            content: shareUrl,
+                        },
+                    },
+                ],
+            };
+        } else {
+            // 旧架构：使用HTML代码字段（截断处理）
+            const truncatedHtml = htmlContent.length > 2000 ? htmlContent.substring(0, 2000) + '...' : htmlContent;
+            properties['HTML代码'] = {
+                rich_text: [
+                    {
+                        text: {
+                            content: truncatedHtml,
+                        },
+                    },
+                ],
+            };
+        }
+        
+        // 在Notion中创建记录
         const response = await notion.pages.create({
             parent: { database_id: databaseId },
-            properties: {
-                '页面标题': {
-                    title: [
-                        {
-                            text: {
-                                content: title,
-                            },
-                        },
-                    ],
-                },
-                'HTML哈希值': {
-                    rich_text: [
-                        {
-                            text: {
-                                content: htmlHash,
-                            },
-                        },
-                    ],
-                },
-                '描述': {
-                    rich_text: [
-                        {
-                            text: {
-                                content: description || '',
-                            },
-                        },
-                    ],
-                },
-                '页面ID': {
-                    rich_text: [
-                        {
-                            text: {
-                                content: pageId,
-                            },
-                        },
-                    ],
-                },
-                '分享链接': {
-                    rich_text: [
-                        {
-                            text: {
-                                content: shareUrl,
-                            },
-                        },
-                    ],
-                },
-            },
+            properties: properties,
         });
         
         // 返回格式化的响应
@@ -249,12 +281,21 @@ app.get('/api/deployments/:id', async (req, res) => {
     try {
         const response = await notion.pages.retrieve({ page_id: pageId });
         
-        // 获取HTML哈希值并读取实际内容
-        const htmlHash = response.properties.HTML哈希值.rich_text[0]?.plain_text || '';
+        // 兼容旧和新数据库结构
+        const properties = response.properties;
         let htmlContent = '';
+        let htmlHash = '';
         
-        if (htmlHash) {
-            htmlContent = await getHtmlContent(htmlHash) || '';
+        // 检查是新结构还是旧结构
+        if (properties['HTML哈希值']) {
+            // 新结构：有哈希值字段
+            htmlHash = properties['HTML哈希值']?.rich_text[0]?.plain_text || '';
+            if (htmlHash) {
+                htmlContent = await getHtmlContent(htmlHash) || '';
+            }
+        } else if (properties['HTML代码']) {
+            // 旧结构：直接存储HTML代码
+            htmlContent = properties['HTML代码']?.rich_text[0]?.plain_text || '';
         }
         
         // 格式化返回的数据
@@ -281,13 +322,16 @@ app.delete('/api/deployments/:id', async (req, res) => {
     const pageId = req.params.id;
     
     try {
-        // 首先获取页面信息以获取HTML哈希值
+        // 首先获取页面信息
         const pageResponse = await notion.pages.retrieve({ page_id: pageId });
-        const htmlHash = pageResponse.properties.HTML哈希值.rich_text[0]?.plain_text || '';
+        const properties = pageResponse.properties;
         
-        // 删除对应的HTML文件
-        if (htmlHash) {
-            await deleteHtmlContent(htmlHash);
+        // 如果有哈希值字段，删除对应的HTML文件
+        if (properties['HTML哈希值']) {
+            const htmlHash = properties['HTML哈希值']?.rich_text[0]?.plain_text || '';
+            if (htmlHash) {
+                await deleteHtmlContent(htmlHash);
+            }
         }
         
         // 归档Notion中的页面
