@@ -122,10 +122,20 @@ app.post('/api/deploy', async (req, res) => {
                 },
             },
         });
-        res.status(201).json(response);
+        
+        // 返回格式化的响应
+        res.status(201).json({
+            success: true,
+            id: response.id,
+            message: '页面创建成功'
+        });
     } catch (error) {
         console.error('创建页面失败:', error);
-        res.status(500).json({ error: '无法在Notion中创建页面' });
+        res.status(500).json({ 
+            error: '无法在Notion中创建页面',
+            details: error.message,
+            code: error.code
+        });
     }
 });
 
