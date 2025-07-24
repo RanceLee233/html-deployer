@@ -47,22 +47,18 @@ Notion 数据库应具有以下属性：
    - 响应式设计，支持移动端
 4. **推送到 GitHub** - 代码已成功推送到 https://github.com/RanceLee233/html-deployer
 
-### 🔄 待完成：
+### ✅ 已完成（更新）：
+5. **部署到 Vercel** - 成功部署并修复了以下问题：
+   - ✅ **修复路由不匹配**：将后端API路由统一为 `/api/deployments` 和 `/api/deploy`
+   - ✅ **修复404错误**：添加 `vercel.json` 配置文件，正确映射API路由
+   - ✅ **添加缺失路由**：补充了GET `/api/deployments/:id` 和 DELETE `/api/deployments/:id`
+   - ✅ **解决CORS问题**：确保前后端通信正常
 
-5.  **部署到 Vercel**：
-    - 访问 [Vercel](https://vercel.com) 并登录
-    - 点击 "New Project"
-    - 导入 GitHub 仓库 `RanceLee233/html-deployer`
-    - **Build and Output Settings**：
-      - Build Command: **留空**（删除默认值）
-      - Output Directory: **留空**（删除默认值）
-      - Install Command: 保持默认 `npm install`
-    - **环境变量设置**：
-      - Key: `NOTION_API_KEY`
-        Value: `ntn_Gm686281869ayWzsPVp9sx1y2hHuZ4bJ5hBs4dQOOnkekG`
-      - Key: `NOTION_DATABASE_ID`  
-        Value: `23a028e7d48d80d499dadb3720bf26d5`
-    - 点击 "Deploy"
+### 🔄 待完成：
+6. **Vercel环境变量配置**（如已部署请跳过）：
+   - 在Vercel项目设置中添加环境变量：
+     - `NOTION_API_KEY`: `ntn_Gm686281869ayWzsPVp9sx1y2hHuZ4bJ5hBs4dQOOnkekG`
+     - `NOTION_DATABASE_ID`: `23a028e7d48d80d499dadb3720bf26d5`
 
 ### 📝 本地测试方法：
 1. 在一个终端窗口运行后端：`node server.js`
