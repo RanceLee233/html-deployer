@@ -167,7 +167,7 @@ app.get('/api/deployments', async (req, res) => {
                 id: page.id,
                 title: properties.页面标题?.title[0]?.plain_text || '无标题',
                 htmlHash: hasNewStructure ? properties['HTML哈希值']?.rich_text[0]?.plain_text || '' : '',
-                htmlContent: hasOldStructure ? properties['HTML代码']?.rich_text[0]?.plain_text || '' : '',
+                htmlContent: hasNewStructure ? (properties['完整HTML内容']?.rich_text[0]?.plain_text || '') : (properties['HTML代码']?.rich_text[0]?.plain_text || ''),
                 description: properties.描述?.rich_text[0]?.plain_text || '',
                 createdAt: page.created_time,
                 shareUrl: properties['分享链接']?.rich_text[0]?.plain_text || '',
