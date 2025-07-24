@@ -49,11 +49,11 @@ function createPageElement(page) {
     div.className = 'deployed-item';
     div.dataset.pageId = page.id;
     
-    const createdDate = new Date(page.properties['创建时间'].created_time).toLocaleString('zh-CN');
+    const createdDate = new Date(page.createdAt).toLocaleString('zh-CN');
     
     div.innerHTML = `
-        <h3>${page.properties['页面标题'].title[0]?.plain_text || '无标题'}</h3>
-        <p class="description">${page.properties['描述']?.rich_text[0]?.plain_text || '无描述'}</p>
+        <h3>${page.title || '无标题'}</h3>
+        <p class="description">${page.description || '无描述'}</p>
         <p class="meta">创建时间: ${createdDate}</p>
         <div class="item-actions">
             <button class="btn-secondary" onclick="viewPage('${page.id}')">查看页面</button>
@@ -75,7 +75,7 @@ async function handleDeploy(event) {
     const formData = {
         title: document.getElementById('pageTitle').value,
         description: document.getElementById('pageDescription').value,
-        html: document.getElementById('htmlCode').value
+        htmlContent: document.getElementById('htmlCode').value
     };
     
     try {
@@ -119,7 +119,7 @@ async function viewPage(pageId) {
         }
         
         const pageData = await response.json();
-        const htmlContent = pageData.properties['HTML代码']?.rich_text[0]?.plain_text;
+        const htmlContent = pageData.htmlContent;
         
         if (!htmlContent) {
             alert('此页面没有 HTML 内容');

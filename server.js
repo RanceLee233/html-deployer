@@ -101,7 +101,17 @@ app.get('/api/deployments/:id', async (req, res) => {
     
     try {
         const response = await notion.pages.retrieve({ page_id: pageId });
-        res.json(response);
+        
+        // 格式化返回的数据，保持与列表API一致
+        const page = {
+            id: response.id,
+            title: response.properties.页面标题.title[0]?.plain_text || '无标题',
+            htmlContent: response.properties.HTML代码.rich_text[0]?.plain_text || '',
+            description: response.properties.描述.rich_text[0]?.plain_text || '',
+            createdAt: response.created_time,
+        };
+        
+        res.json(page);
     } catch (error) {
         console.error('获取页面详情失败:', error);
         res.status(500).json({ error: '无法获取页面详情' });
