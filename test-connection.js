@@ -33,6 +33,7 @@ async function testConnection() {
             '页面标题',
             'HTML代码', // 旧字段
             'HTML哈希值', // 新字段
+            '完整HTML内容', // 新字段：存储完整HTML
             '描述',
             '页面ID',
             '分享链接'

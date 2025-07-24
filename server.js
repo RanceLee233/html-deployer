@@ -36,50 +36,72 @@ function generateHash(content) {
     return crypto.createHash('md5').update(content).digest('hex');
 }
 
-// 保存HTML内容到文件系统
+// 保存HTML内容到Notion数据库（使用新字段存储完整内容）
 async function saveHtmlContent(content) {
     const hash = generateHash(content);
-    const filename = `${hash}.html`;
-    const filepath = path.join(HTML_STORAGE_DIR, filename);
-    
-    try {
-        await fs.writeFile(filepath, content, 'utf8');
-        return hash;
-    } catch (error) {
-        console.error('保存HTML内容失败:', error);
-        throw error;
-    }
+    return hash;
 }
 
-// 从文件系统读取HTML内容
+// 从Notion数据库读取HTML内容
 async function getHtmlContent(hash) {
-    const filename = `${hash}.html`;
-    const filepath = path.join(HTML_STORAGE_DIR, filename);
-    
     try {
-        const content = await fs.readFile(filepath, 'utf8');
-        return content;
-    } catch (error) {
-        if (error.code === 'ENOENT') {
-            return null; // 文件不存在
+        // 通过哈希值查找对应的Notion页面
+        const response = await notion.databases.query({
+            database_id: databaseId,
+            filter: {
+                property: 'HTML哈希值',
+                rich_text: {
+                    equals: hash
+                }
+            }
+        });
+        
+        if (response.results.length > 0) {
+            const page = response.results[0];
+            // 从页面内容中获取HTML
+            const content = page.properties['完整HTML内容']?.rich_text[0]?.plain_text;
+            if (content) {
+                return content;
+            }
+            
+            // 如果没有完整HTML内容字段，尝试旧字段
+            const oldContent = page.properties['HTML代码']?.rich_text[0]?.plain_text;
+            if (oldContent) {
+                return oldContent;
+            }
         }
-        console.error('读取HTML内容失败:', error);
+        
+        return null;
+    } catch (error) {
+        console.error('从Notion读取HTML内容失败:', error);
         throw error;
     }
 }
 
-// 删除HTML内容文件
+// 删除HTML内容（通过归档Notion页面）
 async function deleteHtmlContent(hash) {
-    const filename = `${hash}.html`;
-    const filepath = path.join(HTML_STORAGE_DIR, filename);
-    
     try {
-        await fs.unlink(filepath);
-        return true;
-    } catch (error) {
-        if (error.code === 'ENOENT') {
-            return false; // 文件不存在
+        const response = await notion.databases.query({
+            database_id: databaseId,
+            filter: {
+                property: 'HTML哈希值',
+                rich_text: {
+                    equals: hash
+                }
+            }
+        });
+        
+        if (response.results.length > 0) {
+            const pageId = response.results[0].id;
+            await notion.pages.update({
+                page_id: pageId,
+                archived: true
+            });
+            return true;
         }
+        
+        return false;
+    } catch (error) {
         console.error('删除HTML内容失败:', error);
         throw error;
     }
@@ -207,14 +229,22 @@ app.post('/api/deploy', async (req, res) => {
             },
         };
         
-        // 根据数据库结构选择字段
+        // 新架构：使用哈希值和完整HTML内容
         if (hasNewStructure) {
-            // 新架构：使用哈希值
             properties['HTML哈希值'] = {
                 rich_text: [
                     {
                         text: {
                             content: htmlHash,
+                        },
+                    },
+                ],
+            };
+            properties['完整HTML内容'] = {
+                rich_text: [
+                    {
+                        text: {
+                            content: htmlContent,
                         },
                     },
                 ],
