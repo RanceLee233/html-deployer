@@ -16,12 +16,12 @@
 
 ## Notion 集成详情
 
-### 数据库 ID:
-`23a028e7d48d80d499dadb3720bf26d5`
+### 环境变量配置:
+项目需要以下环境变量：
+- `NOTION_API_KEY`: 你的Notion集成API密钥
+- `NOTION_DATABASE_ID`: 目标Notion数据库的ID
 
-### API 密钥（敏感！请勿公开分享）：
-`ntn_Gm686281869ayWzsPVp9sx1y2hHuZ4bJ5hBs4dQOOnkekG`
-*注意：此密钥由用户提供。如果出现连接问题，请根据您的 Notion 集成页面中以 `secret_` 开头的密钥进行验证。*
+*注意：请确保API密钥和数据库ID通过环境变量设置，而不是硬编码在代码中。*
 
 ### 数据库结构:
 Notion 数据库应具有以下属性：
@@ -57,8 +57,8 @@ Notion 数据库应具有以下属性：
 ### 🔄 待完成：
 6. **Vercel环境变量配置**（如已部署请跳过）：
    - 在Vercel项目设置中添加环境变量：
-     - `NOTION_API_KEY`: `ntn_Gm686281869ayWzsPVp9sx1y2hHuZ4bJ5hBs4dQOOnkekG`
-     - `NOTION_DATABASE_ID`: `23a028e7d48d80d499dadb3720bf26d5`
+     - `NOTION_API_KEY`: 你的Notion集成API密钥  
+     - `NOTION_DATABASE_ID`: 你的Notion数据库ID
 
 ### 📝 本地测试方法：
 1. 在一个终端窗口运行后端：`node server.js`
