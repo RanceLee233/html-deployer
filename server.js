@@ -17,8 +17,10 @@ const databaseId = process.env.NOTION_DATABASE_ID;
 app.use(cors());
 app.use(express.json());
 
-// HTML内容存储目录
-const HTML_STORAGE_DIR = path.join(__dirname, 'html_storage');
+// HTML内容存储目录 - 适配Vercel无服务器环境
+const HTML_STORAGE_DIR = process.env.VERCEL 
+    ? path.join('/tmp', 'html_storage') 
+    : path.join(__dirname, 'html_storage');
 
 // 确保存储目录存在
 async function ensureStorageDir() {
@@ -380,6 +382,11 @@ app.get('/view/:hash', async (req, res) => {
         console.error('查看页面失败:', error);
         res.status(500).send('服务器错误');
     }
+});
+
+// 6. 处理favicon.ico请求
+app.get('/favicon.ico', (req, res) => {
+    res.status(204).end();
 });
 
 // 启动服务器
