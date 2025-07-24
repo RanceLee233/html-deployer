@@ -16,9 +16,38 @@ app.use(express.json());
 
 // --- API 路由 ---
 
+// 健康检查端点
+app.get('/api/health', (req, res) => {
+    res.json({
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+        environment: {
+            hasNotionApiKey: !!process.env.NOTION_API_KEY,
+            hasNotionDatabaseId: !!process.env.NOTION_DATABASE_ID,
+            notionDatabaseId: process.env.NOTION_DATABASE_ID || 'not set'
+        }
+    });
+});
+
 // 1. 获取所有已部署的页面
 app.get('/api/deployments', async (req, res) => {
     try {
+        // 添加环境变量检查
+        if (!process.env.NOTION_API_KEY || !process.env.NOTION_DATABASE_ID) {
+            console.error('环境变量缺失:', {
+                hasApiKey: !!process.env.NOTION_API_KEY,
+                hasDatabaseId: !!process.env.NOTION_DATABASE_ID
+            });
+            return res.status(500).json({ 
+                error: '服务器配置错误：缺少必需的环境变量',
+                details: {
+                    hasApiKey: !!process.env.NOTION_API_KEY,
+                    hasDatabaseId: !!process.env.NOTION_DATABASE_ID
+                }
+            });
+        }
+
+        console.log('尝试连接Notion数据库:', databaseId);
         const response = await notion.databases.query({
             database_id: databaseId,
             sorts: [
@@ -40,10 +69,15 @@ app.get('/api/deployments', async (req, res) => {
             };
         });
 
+        console.log(`成功获取 ${pages.length} 个页面`);
         res.json(pages);
     } catch (error) {
         console.error('获取页面失败:', error);
-        res.status(500).json({ error: '无法从Notion获取页面' });
+        res.status(500).json({ 
+            error: '无法从Notion获取页面',
+            details: error.message,
+            code: error.code
+        });
     }
 });
 
