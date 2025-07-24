@@ -15,19 +15,7 @@ const databaseId = process.env.NOTION_DATABASE_ID;
 app.use(cors());
 app.use(express.json());
 
-// HTML内容存储目录 - 适配Vercel无服务器环境
-const HTML_STORAGE_DIR = process.env.VERCEL 
-    ? path.join('/tmp', 'html_storage') 
-    : path.join(__dirname, 'html_storage');
 
-// 确保存储目录存在
-async function ensureStorageDir() {
-    try {
-        await fs.mkdir(HTML_STORAGE_DIR, { recursive: true });
-    } catch (error) {
-        console.error('创建存储目录失败:', error);
-    }
-}
 
 // 生成HTML内容的哈希值
 function generateHash(content) {
@@ -108,16 +96,34 @@ async function deleteHtmlContent(hash) {
 // --- API 路由 ---
 
 // 健康检查端点
-app.get('/api/health', (req, res) => {
-    res.json({
-        status: 'ok',
-        timestamp: new Date().toISOString(),
-        environment: {
-            hasNotionApiKey: !!process.env.NOTION_API_KEY,
-            hasNotionDatabaseId: !!process.env.NOTION_DATABASE_ID,
-            notionDatabaseId: process.env.NOTION_DATABASE_ID || 'not set'
-        }
-    });
+app.get('/api/health', async (req, res) => {
+    try {
+        // 测试数据库连接
+        const db = await notion.databases.retrieve({ database_id: databaseId });
+        
+        res.json({
+            status: 'ok',
+            timestamp: new Date().toISOString(),
+            environment: {
+                hasNotionApiKey: !!process.env.NOTION_API_KEY,
+                hasNotionDatabaseId: !!process.env.NOTION_DATABASE_ID,
+                notionDatabaseId: process.env.NOTION_DATABASE_ID || 'not set',
+                databaseName: db.title[0]?.plain_text || '未知'
+            },
+            database: {
+                title: db.title[0]?.plain_text || '无标题',
+                properties: Object.keys(db.properties)
+            }
+        });
+    } catch (error) {
+        console.error('健康检查失败:', error);
+        res.status(500).json({
+            status: 'error',
+            timestamp: new Date().toISOString(),
+            error: error.message,
+            code: error.code
+        });
+    }
 });
 
 // 1. 获取所有已部署的页面
