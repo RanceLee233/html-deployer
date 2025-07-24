@@ -56,7 +56,8 @@ function createPageElement(page) {
         <p class="description">${page.description || '无描述'}</p>
         <p class="meta">创建时间: ${createdDate}</p>
         <div class="item-actions">
-            <button class="btn-secondary" onclick="viewPage('${page.id}')">查看页面</button>
+            <button class="btn-secondary" onclick="viewPageByHash('${page.htmlHash}')">查看页面</button>
+            <button class="btn-copy" onclick="copyShareLink('${page.shareUrl}')">复制链接</button>
             <button class="btn-danger" onclick="deletePage('${page.id}')">删除</button>
         </div>
     `;
@@ -111,6 +112,16 @@ async function handleDeploy(event) {
     }
 }
 
+async function viewPageByHash(htmlHash) {
+    if (!htmlHash) {
+        alert('页面哈希值无效');
+        return;
+    }
+    
+    const viewUrl = `/view/${htmlHash}`;
+    window.open(viewUrl, '_blank');
+}
+
 async function viewPage(pageId) {
     try {
         const response = await fetch(`${API_BASE_URL}/deployments/${pageId}`);
@@ -119,21 +130,41 @@ async function viewPage(pageId) {
         }
         
         const pageData = await response.json();
-        const htmlContent = pageData.htmlContent;
+        const htmlHash = pageData.htmlHash;
         
-        if (!htmlContent) {
+        if (!htmlHash) {
             alert('此页面没有 HTML 内容');
             return;
         }
         
-        // 在新窗口中打开 HTML 内容
-        const newWindow = window.open('', '_blank');
-        newWindow.document.write(htmlContent);
-        newWindow.document.close();
+        // 使用哈希值直接访问页面
+        viewPageByHash(htmlHash);
         
     } catch (error) {
         console.error('查看页面时出错:', error);
         alert('无法查看页面: ' + error.message);
+    }
+}
+
+async function copyShareLink(shareUrl) {
+    if (!shareUrl) {
+        alert('分享链接无效');
+        return;
+    }
+    
+    try {
+        await navigator.clipboard.writeText(shareUrl);
+        showSuccessMessage('分享链接已复制到剪贴板！');
+    } catch (error) {
+        console.error('复制链接失败:', error);
+        // 降级方案
+        const textArea = document.createElement('textarea');
+        textArea.value = shareUrl;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        showSuccessMessage('分享链接已复制到剪贴板！');
     }
 }
 

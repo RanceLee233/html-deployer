@@ -24,6 +24,10 @@
       "dest": "/server.js"
     },
     {
+      "src": "/view/(.*)",
+      "dest": "/server.js"
+    },
+    {
       "src": "/script.js",
       "dest": "/script.js"
     },

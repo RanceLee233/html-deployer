@@ -2,6 +2,9 @@ require('dotenv').config();
 const express = require('express');
 const { Client } = require('@notionhq/client');
 const cors = require('cors');
+const crypto = require('crypto');
+const fs = require('fs').promises;
+const path = require('path');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -13,6 +16,72 @@ const databaseId = process.env.NOTION_DATABASE_ID;
 // 中间件
 app.use(cors());
 app.use(express.json());
+
+// HTML内容存储目录
+const HTML_STORAGE_DIR = path.join(__dirname, 'html_storage');
+
+// 确保存储目录存在
+async function ensureStorageDir() {
+    try {
+        await fs.mkdir(HTML_STORAGE_DIR, { recursive: true });
+    } catch (error) {
+        console.error('创建存储目录失败:', error);
+    }
+}
+
+// 生成HTML内容的哈希值
+function generateHash(content) {
+    return crypto.createHash('md5').update(content).digest('hex');
+}
+
+// 保存HTML内容到文件系统
+async function saveHtmlContent(content) {
+    const hash = generateHash(content);
+    const filename = `${hash}.html`;
+    const filepath = path.join(HTML_STORAGE_DIR, filename);
+    
+    try {
+        await fs.writeFile(filepath, content, 'utf8');
+        return hash;
+    } catch (error) {
+        console.error('保存HTML内容失败:', error);
+        throw error;
+    }
+}
+
+// 从文件系统读取HTML内容
+async function getHtmlContent(hash) {
+    const filename = `${hash}.html`;
+    const filepath = path.join(HTML_STORAGE_DIR, filename);
+    
+    try {
+        const content = await fs.readFile(filepath, 'utf8');
+        return content;
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            return null; // 文件不存在
+        }
+        console.error('读取HTML内容失败:', error);
+        throw error;
+    }
+}
+
+// 删除HTML内容文件
+async function deleteHtmlContent(hash) {
+    const filename = `${hash}.html`;
+    const filepath = path.join(HTML_STORAGE_DIR, filename);
+    
+    try {
+        await fs.unlink(filepath);
+        return true;
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            return false; // 文件不存在
+        }
+        console.error('删除HTML内容失败:', error);
+        throw error;
+    }
+}
 
 // --- API 路由 ---
 
@@ -63,9 +132,11 @@ app.get('/api/deployments', async (req, res) => {
             return {
                 id: page.id,
                 title: page.properties.页面标题.title[0]?.plain_text || '无标题',
-                htmlContent: page.properties.HTML代码.rich_text[0]?.plain_text || '',
+                htmlHash: page.properties.HTML哈希值.rich_text[0]?.plain_text || '',
                 description: page.properties.描述.rich_text[0]?.plain_text || '',
                 createdAt: page.created_time,
+                shareUrl: page.properties.分享链接.rich_text[0]?.plain_text || '',
+                pageId: page.properties.页面ID.rich_text[0]?.plain_text || ''
             };
         });
 
@@ -90,6 +161,17 @@ app.post('/api/deploy', async (req, res) => {
     }
 
     try {
+        // 确保存储目录存在
+        await ensureStorageDir();
+        
+        // 生成HTML内容的哈希值并保存到文件系统
+        const htmlHash = await saveHtmlContent(htmlContent);
+        
+        // 生成唯一页面ID和分享URL
+        const pageId = Date.now().toString(36) + Math.random().toString(36).substr(2);
+        const shareUrl = `${req.protocol}://${req.get('host')}/view/${htmlHash}`;
+        
+        // 在Notion中创建记录，只存储哈希值
         const response = await notion.pages.create({
             parent: { database_id: databaseId },
             properties: {
@@ -102,11 +184,11 @@ app.post('/api/deploy', async (req, res) => {
                         },
                     ],
                 },
-                'HTML代码': {
+                'HTML哈希值': {
                     rich_text: [
                         {
                             text: {
-                                content: htmlContent,
+                                content: htmlHash,
                             },
                         },
                     ],
@@ -120,6 +202,24 @@ app.post('/api/deploy', async (req, res) => {
                         },
                     ],
                 },
+                '页面ID': {
+                    rich_text: [
+                        {
+                            text: {
+                                content: pageId,
+                            },
+                        },
+                    ],
+                },
+                '分享链接': {
+                    rich_text: [
+                        {
+                            text: {
+                                content: shareUrl,
+                            },
+                        },
+                    ],
+                },
             },
         });
         
@@ -127,6 +227,9 @@ app.post('/api/deploy', async (req, res) => {
         res.status(201).json({
             success: true,
             id: response.id,
+            pageId: pageId,
+            htmlHash: htmlHash,
+            shareUrl: shareUrl,
             message: '页面创建成功'
         });
     } catch (error) {
@@ -146,13 +249,24 @@ app.get('/api/deployments/:id', async (req, res) => {
     try {
         const response = await notion.pages.retrieve({ page_id: pageId });
         
-        // 格式化返回的数据，保持与列表API一致
+        // 获取HTML哈希值并读取实际内容
+        const htmlHash = response.properties.HTML哈希值.rich_text[0]?.plain_text || '';
+        let htmlContent = '';
+        
+        if (htmlHash) {
+            htmlContent = await getHtmlContent(htmlHash) || '';
+        }
+        
+        // 格式化返回的数据
         const page = {
             id: response.id,
             title: response.properties.页面标题.title[0]?.plain_text || '无标题',
-            htmlContent: response.properties.HTML代码.rich_text[0]?.plain_text || '',
+            htmlContent: htmlContent,
+            htmlHash: htmlHash,
             description: response.properties.描述.rich_text[0]?.plain_text || '',
             createdAt: response.created_time,
+            shareUrl: response.properties.分享链接.rich_text[0]?.plain_text || '',
+            pageId: response.properties.页面ID.rich_text[0]?.plain_text || ''
         };
         
         res.json(page);
@@ -167,14 +281,60 @@ app.delete('/api/deployments/:id', async (req, res) => {
     const pageId = req.params.id;
     
     try {
+        // 首先获取页面信息以获取HTML哈希值
+        const pageResponse = await notion.pages.retrieve({ page_id: pageId });
+        const htmlHash = pageResponse.properties.HTML哈希值.rich_text[0]?.plain_text || '';
+        
+        // 删除对应的HTML文件
+        if (htmlHash) {
+            await deleteHtmlContent(htmlHash);
+        }
+        
+        // 归档Notion中的页面
         await notion.pages.update({
             page_id: pageId,
             archived: true
         });
+        
         res.json({ success: true });
     } catch (error) {
         console.error('删除页面失败:', error);
         res.status(500).json({ error: '无法删除页面' });
+    }
+});
+
+// 5. 通过哈希值直接查看HTML内容
+app.get('/view/:hash', async (req, res) => {
+    const hash = req.params.hash;
+    
+    try {
+        const htmlContent = await getHtmlContent(hash);
+        
+        if (!htmlContent) {
+            return res.status(404).send(`
+                <!DOCTYPE html>
+                <html lang="zh-CN">
+                <head>
+                    <meta charset="UTF-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <title>页面未找到</title>
+                    <style>
+                        body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
+                        .error { color: #e74c3c; }
+                    </style>
+                </head>
+                <body>
+                    <h1 class="error">页面未找到</h1>
+                    <p>请求的页面不存在或已被删除。</p>
+                </body>
+                </html>
+            `);
+        }
+        
+        res.send(htmlContent);
+    } catch (error) {
+        console.error('查看页面失败:', error);
+        res.status(500).send('服务器错误');
     }
 });
 

@@ -170,6 +170,24 @@ textarea {
 .item-actions {
     display: flex;
     gap: 10px;
+    flex-wrap: wrap;
+}
+
+.btn-copy {
+    padding: 8px 16px;
+    border: 1px solid #27ae60;
+    background-color: white;
+    color: #27ae60;
+    border-radius: 4px;
+    text-decoration: none;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: all 0.3s;
+}
+
+.btn-copy:hover {
+    background-color: #27ae60;
+    color: white;
 }
 
 .btn-secondary {
