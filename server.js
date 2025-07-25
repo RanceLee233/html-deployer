@@ -307,35 +307,82 @@ app.post('/api/deploy', async (req, res) => {
             properties: properties,
         });
         
-        // 如果是新架构，将HTML内容添加到页面正文中（作为代码块）
+        // 如果是新架构，将HTML内容添加到页面正文中
         if (hasNewStructure) {
             try {
+                // 如果HTML内容过长，分段存储
+                const maxChunkSize = 2000; // Notion单个文本块限制
+                const htmlChunks = [];
+                
+                for (let i = 0; i < htmlContent.length; i += maxChunkSize) {
+                    htmlChunks.push(htmlContent.substring(i, i + maxChunkSize));
+                }
+                
+                console.log(`HTML内容长度: ${htmlContent.length}, 分为 ${htmlChunks.length} 段`);
+                
+                const children = [];
+                
+                // 添加标题说明
+                children.push({
+                    object: 'block',
+                    type: 'heading_3',
+                    heading_3: {
+                        rich_text: [{
+                            type: 'text',
+                            text: { content: 'HTML内容' }
+                        }]
+                    }
+                });
+                
+                // 将每个分段作为段落添加
+                htmlChunks.forEach((chunk, index) => {
+                    children.push({
+                        object: 'block',
+                        type: 'paragraph',
+                        paragraph: {
+                            rich_text: [{
+                                type: 'text',
+                                text: {
+                                    content: chunk
+                                }
+                            }]
+                        }
+                    });
+                });
+                
+                // 批量添加到页面
                 await notion.blocks.children.append({
                     block_id: response.id,
-                    children: [
-                        {
-                            object: 'block',
-                            type: 'code',
-                            code: {
-                                caption: [],
-                                rich_text: [
-                                    {
-                                        type: 'text',
-                                        text: {
-                                            content: htmlContent
-                                        }
-                                    }
-                                ],
-                                language: 'html'
-                            }
-                        }
-                    ]
+                    children: children
                 });
-                console.log('HTML内容已成功添加到页面正文');
+                
+                console.log(`HTML内容已成功添加到页面正文（${htmlChunks.length}个分段）`);
             } catch (blockError) {
                 console.error('添加页面正文失败:', blockError);
-                // 如果添加正文失败，可以考虑回退到字段存储（截断）
-                console.log('回退到字段存储方案');
+                console.error('详细错误:', JSON.stringify(blockError, null, 2));
+                
+                // 如果添加正文失败，回退到字段存储（截断）
+                try {
+                    console.log('尝试回退到字段存储方案...');
+                    const truncatedHtml = htmlContent.substring(0, 1900) + '... [内容过长，已截断]';
+                    
+                    await notion.pages.update({
+                        page_id: response.id,
+                        properties: {
+                            '完整HTML内容': {
+                                rich_text: [{
+                                    text: {
+                                        content: truncatedHtml
+                                    }
+                                }]
+                            }
+                        }
+                    });
+                    
+                    console.log('已回退到截断存储方案');
+                } catch (fallbackError) {
+                    console.error('回退方案也失败:', fallbackError);
+                }
             }
         }
         
@@ -381,15 +428,46 @@ app.get('/api/deployments/:id', async (req, res) => {
                     block_id: response.id
                 });
                 
-                // 查找代码块作为HTML内容
+                // 合并所有段落内容作为HTML
+                const contentParts = [];
+                let foundHtmlSection = false;
+                
                 for (const block of pageContent.results) {
-                    if (block.type === 'code' && block.code) {
-                        htmlContent = block.code.rich_text[0]?.plain_text || '';
-                        break; // 只取第一个代码块
+                    // 跳过标题，查找段落内容
+                    if (block.type === 'heading_3' && block.heading_3) {
+                        const headingText = block.heading_3.rich_text[0]?.plain_text || '';
+                        if (headingText === 'HTML内容') {
+                            foundHtmlSection = true;
+                            continue;
+                        }
                     }
+                    
+                    // 在HTML内容区域中收集段落
+                    if (foundHtmlSection && block.type === 'paragraph' && block.paragraph) {
+                        const text = block.paragraph.rich_text[0]?.plain_text || '';
+                        if (text) {
+                            contentParts.push(text);
+                        }
+                    }
+                    
+                    // 兼容旧的代码块格式
+                    if (block.type === 'code' && block.code) {
+                        contentParts.push(block.code.rich_text[0]?.plain_text || '');
+                    }
+                }
+                
+                if (contentParts.length > 0) {
+                    htmlContent = contentParts.join('');
+                    console.log(`从页面正文读取到HTML内容，总长度: ${htmlContent.length}`);
                 }
             } catch (contentError) {
                 console.error('从页面正文读取HTML失败:', contentError);
+                
+                // 尝试从字段中读取（回退方案）
+                if (response.properties['完整HTML内容']) {
+                    htmlContent = response.properties['完整HTML内容']?.rich_text[0]?.plain_text || '';
+                    console.log('从回退字段读取到HTML内容');
+                }
             }
         } else if (properties['HTML代码']) {
             // 旧结构：直接存储HTML代码
@@ -500,17 +578,35 @@ app.get('/view/:hash', async (req, res) => {
             
             // 合并所有文本内容作为HTML
             const contentParts = [];
+            let foundHtmlSection = false;
+            
             for (const block of pageContent.results) {
+                // 跳过标题，查找段落内容
+                if (block.type === 'heading_3' && block.heading_3) {
+                    const headingText = block.heading_3.rich_text[0]?.plain_text || '';
+                    if (headingText === 'HTML内容') {
+                        foundHtmlSection = true;
+                        continue;
+                    }
+                }
+                
+                // 在HTML内容区域中收集段落
+                if (foundHtmlSection && block.type === 'paragraph' && block.paragraph) {
+                    const text = block.paragraph.rich_text[0]?.plain_text || '';
+                    if (text) {
+                        contentParts.push(text);
+                    }
+                }
+                
+                // 兼容旧的代码块格式
                 if (block.type === 'code' && block.code) {
                     contentParts.push(block.code.rich_text[0]?.plain_text || '');
-                }
-                if (block.type === 'paragraph' && block.paragraph) {
-                    contentParts.push(block.paragraph.rich_text[0]?.plain_text || '');
                 }
             }
             
             if (contentParts.length > 0) {
-                htmlContent = contentParts.join('\n');
+                htmlContent = contentParts.join('');
+                console.log(`从页面正文读取到HTML内容，总长度: ${htmlContent.length}`);
             }
         } catch (contentError) {
             console.log('页面正文读取失败，尝试字段读取');
