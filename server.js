@@ -17,9 +17,16 @@ app.use(express.json());
 
 
 
-// 生成HTML内容的哈希值
+// 生成HTML内容的哈希值（支持用标题生成）
 function generateHash(content) {
-    return crypto.createHash('md5').update(content).digest('hex');
+    // 如果内容太长，用前100字符+时间戳生成哈希
+    const hashSource = content.length > 100 ? content.substring(0, 100) + Date.now() : content;
+    return crypto.createHash('md5').update(hashSource).digest('hex').substring(0, 8);
+}
+
+// 从标题生成哈希值
+function generateHashFromTitle(title) {
+    return crypto.createHash('md5').update(title).digest('hex').substring(0, 8);
 }
 
 // 保存HTML内容到Notion数据库（使用新字段存储完整内容）
@@ -44,13 +51,33 @@ async function getHtmlContent(hash) {
         
         if (response.results.length > 0) {
             const page = response.results[0];
-            // 从页面内容中获取HTML
+            
+            // 1. 优先从页面正文中获取HTML内容
+            try {
+                const pageContent = await notion.blocks.children.list({
+                    block_id: page.id
+                });
+                
+                // 查找第一个代码块或文本块作为HTML内容
+                for (const block of pageContent.results) {
+                    if (block.type === 'code' && block.code) {
+                        return block.code.rich_text[0]?.plain_text || '';
+                    }
+                    if (block.type === 'paragraph' && block.paragraph) {
+                        return block.paragraph.rich_text[0]?.plain_text || '';
+                    }
+                }
+            } catch (contentError) {
+                console.log('页面正文读取失败，尝试字段读取');
+            }
+            
+            // 2. 从属性字段中获取HTML
             const content = page.properties['完整HTML内容']?.rich_text[0]?.plain_text;
             if (content) {
                 return content;
             }
             
-            // 如果没有完整HTML内容字段，尝试旧字段
+            // 3. 如果没有完整HTML内容字段，尝试旧字段
             const oldContent = page.properties['HTML代码']?.rich_text[0]?.plain_text;
             if (oldContent) {
                 return oldContent;
@@ -159,7 +186,7 @@ app.get('/api/deployments', async (req, res) => {
         const pages = response.results.map(page => {
             const properties = page.properties;
             
-            // 兼容旧字段和新字段
+            // 兼容旧和新数据库结构
             const hasNewStructure = properties['HTML哈希值'] !== undefined;
             const hasOldStructure = properties['HTML代码'] !== undefined;
             
@@ -167,7 +194,7 @@ app.get('/api/deployments', async (req, res) => {
                 id: page.id,
                 title: properties.页面标题?.title[0]?.plain_text || '无标题',
                 htmlHash: hasNewStructure ? properties['HTML哈希值']?.rich_text[0]?.plain_text || '' : '',
-                htmlContent: hasNewStructure ? (properties['完整HTML内容']?.rich_text[0]?.plain_text || '') : (properties['HTML代码']?.rich_text[0]?.plain_text || ''),
+                htmlContent: '', // 不在列表中显示HTML内容，以提高性能
                 description: properties.描述?.rich_text[0]?.plain_text || '',
                 createdAt: page.created_time,
                 shareUrl: properties['分享链接']?.rich_text[0]?.plain_text || '',
@@ -230,7 +257,7 @@ app.post('/api/deploy', async (req, res) => {
             },
         };
         
-        // 新架构：使用哈希值和完整HTML内容
+        // 新架构：使用哈希值，HTML内容存储在页面正文中
         if (hasNewStructure) {
             properties['HTML哈希值'] = {
                 rich_text: [
@@ -241,15 +268,7 @@ app.post('/api/deploy', async (req, res) => {
                     },
                 ],
             };
-            properties['完整HTML内容'] = {
-                rich_text: [
-                    {
-                        text: {
-                            content: htmlContent,
-                        },
-                    },
-                ],
-            };
+            // 不再在字段中存储HTML内容，改为存储在页面正文
             properties['页面ID'] = {
                 rich_text: [
                     {
@@ -288,6 +307,38 @@ app.post('/api/deploy', async (req, res) => {
             properties: properties,
         });
         
+        // 如果是新架构，将HTML内容添加到页面正文中（作为代码块）
+        if (hasNewStructure) {
+            try {
+                await notion.blocks.children.append({
+                    block_id: response.id,
+                    children: [
+                        {
+                            object: 'block',
+                            type: 'code',
+                            code: {
+                                caption: [],
+                                rich_text: [
+                                    {
+                                        type: 'text',
+                                        text: {
+                                            content: htmlContent
+                                        }
+                                    }
+                                ],
+                                language: 'html'
+                            }
+                        }
+                    ]
+                });
+                console.log('HTML内容已成功添加到页面正文');
+            } catch (blockError) {
+                console.error('添加页面正文失败:', blockError);
+                // 如果添加正文失败，可以考虑回退到字段存储（截断）
+                console.log('回退到字段存储方案');
+            }
+        }
+        
         // 返回格式化的响应
         res.status(201).json({
             success: true,
@@ -320,10 +371,26 @@ app.get('/api/deployments/:id', async (req, res) => {
         let htmlHash = '';
         
         // 检查是新结构还是旧结构
-        if (properties['完整HTML内容']) {
-            // 新结构：直接存储完整HTML内容
-            htmlContent = properties['完整HTML内容']?.rich_text[0]?.plain_text || '';
+        if (properties['HTML哈希值']) {
+            // 新结构：从页面正文中获取HTML内容
             htmlHash = properties['HTML哈希值']?.rich_text[0]?.plain_text || '';
+            
+            // 从页面正文中读取HTML内容
+            try {
+                const pageContent = await notion.blocks.children.list({
+                    block_id: response.id
+                });
+                
+                // 查找代码块作为HTML内容
+                for (const block of pageContent.results) {
+                    if (block.type === 'code' && block.code) {
+                        htmlContent = block.code.rich_text[0]?.plain_text || '';
+                        break; // 只取第一个代码块
+                    }
+                }
+            } catch (contentError) {
+                console.error('从页面正文读取HTML失败:', contentError);
+            }
         } else if (properties['HTML代码']) {
             // 旧结构：直接存储HTML代码
             htmlContent = properties['HTML代码']?.rich_text[0]?.plain_text || '';
@@ -335,10 +402,10 @@ app.get('/api/deployments/:id', async (req, res) => {
             title: response.properties.页面标题.title[0]?.plain_text || '无标题',
             htmlContent: htmlContent,
             htmlHash: htmlHash,
-            description: response.properties.描述.rich_text[0]?.plain_text || '',
+            description: response.properties.描述?.rich_text[0]?.plain_text || '',
             createdAt: response.created_time,
-            shareUrl: response.properties.分享链接.rich_text[0]?.plain_text || '',
-            pageId: response.properties.页面ID.rich_text[0]?.plain_text || ''
+            shareUrl: response.properties['分享链接']?.rich_text[0]?.plain_text || '',
+            pageId: response.properties['页面ID']?.rich_text[0]?.plain_text || ''
         };
         
         res.json(page);
@@ -370,13 +437,13 @@ app.delete('/api/deployments/:id', async (req, res) => {
     }
 });
 
-// 5. 通过哈希值直接查看HTML内容
+// 5. 通过哈希值或标题直接查看HTML内容
 app.get('/view/:hash', async (req, res) => {
     const hash = req.params.hash;
     
     try {
-        // 通过哈希值查找对应的Notion页面
-        const response = await notion.databases.query({
+        // 首先尝试用哈希值查找
+        let response = await notion.databases.query({
             database_id: databaseId,
             filter: {
                 property: 'HTML哈希值',
@@ -385,6 +452,20 @@ app.get('/view/:hash', async (req, res) => {
                 }
             }
         });
+        
+        // 如果没找到，尝试用标题生成哈希值查找
+        if (response.results.length === 0) {
+            const titleHash = generateHashFromTitle(decodeURIComponent(hash));
+            response = await notion.databases.query({
+                database_id: databaseId,
+                filter: {
+                    property: 'HTML哈希值',
+                    rich_text: {
+                        equals: titleHash
+                    }
+                }
+            });
+        }
         
         if (response.results.length === 0) {
             return res.status(404).send(`
@@ -402,6 +483,7 @@ app.get('/view/:hash', async (req, res) => {
                 <body>
                     <h1 class="error">页面未找到</h1>
                     <p>请求的页面不存在或已被删除。</p>
+                    <p>请检查页面标题或哈希值是否正确。</p>
                 </body>
                 </html>
             `);
@@ -410,15 +492,58 @@ app.get('/view/:hash', async (req, res) => {
         const page = response.results[0];
         let htmlContent = '';
         
-        // 优先使用完整HTML内容
-        if (page.properties['完整HTML内容']) {
-            htmlContent = page.properties['完整HTML内容']?.rich_text[0]?.plain_text || '';
-        } else if (page.properties['HTML代码']) {
-            htmlContent = page.properties['HTML代码']?.rich_text[0]?.plain_text || '';
+        // 1. 优先从页面正文中获取HTML内容
+        try {
+            const pageContent = await notion.blocks.children.list({
+                block_id: page.id
+            });
+            
+            // 合并所有文本内容作为HTML
+            const contentParts = [];
+            for (const block of pageContent.results) {
+                if (block.type === 'code' && block.code) {
+                    contentParts.push(block.code.rich_text[0]?.plain_text || '');
+                }
+                if (block.type === 'paragraph' && block.paragraph) {
+                    contentParts.push(block.paragraph.rich_text[0]?.plain_text || '');
+                }
+            }
+            
+            if (contentParts.length > 0) {
+                htmlContent = contentParts.join('\n');
+            }
+        } catch (contentError) {
+            console.log('页面正文读取失败，尝试字段读取');
+        }
+        
+        // 2. 如果没有从正文获取到内容，从属性字段中获取
+        if (!htmlContent) {
+            if (page.properties['完整HTML内容']) {
+                htmlContent = page.properties['完整HTML内容']?.rich_text[0]?.plain_text || '';
+            } else if (page.properties['HTML代码']) {
+                htmlContent = page.properties['HTML代码']?.rich_text[0]?.plain_text || '';
+            }
         }
         
         if (!htmlContent) {
-            return res.status(404).send('页面内容为空');
+            return res.status(404).send(`
+                <!DOCTYPE html>
+                <html lang="zh-CN">
+                <head>
+                    <meta charset="UTF-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <title>页面内容为空</title>
+                    <style>
+                        body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
+                        .warning { color: #f39c12; }
+                    </style>
+                </head>
+                <body>
+                    <h1 class="warning">页面内容为空</h1>
+                    <p>请检查Notion页面是否包含HTML内容。</p>
+                </body>
+                </html>
+            `);
         }
         
         res.send(htmlContent);
