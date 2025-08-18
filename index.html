@@ -3,48 +3,57 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HTML 部署器 - Notion 后端</title>
+    <title>HTML 部署器</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>HTML 部署器</h1>
-            <p class="subtitle">使用 Notion 作为后端存储的 HTML 页面部署工具</p>
+    <div class="app-shell">
+        <header class="app-header">
+            <div class="brand">
+                <span class="brand-title" id="appTitle">HTML 部署器</span>
+            </div>
+            <div class="header-actions"></div>
         </header>
 
-        <main>
-            <section class="deploy-section">
-                <h2>部署新页面</h2>
-                <form id="deployForm">
-                    <div class="form-group">
-                        <label for="pageTitle">页面标题</label>
-                        <input type="text" id="pageTitle" name="pageTitle" required placeholder="输入页面标题">
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="pageDescription">页面描述</label>
-                        <input type="text" id="pageDescription" name="pageDescription" placeholder="简短描述（可选）">
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="htmlCode">HTML 代码</label>
-                        <textarea id="htmlCode" name="htmlCode" required placeholder="粘贴您的 HTML 代码"></textarea>
-                    </div>
-                    
-                    <button type="submit" class="btn-primary">部署页面</button>
-                </form>
-            </section>
+        <div class="app-body">
+            <aside class="sidebar">
+                <div class="sidebar-section">
+                    <input id="searchInput" class="search-input" placeholder="搜索页面（标题/描述）" />
+                </div>
 
-            <section class="list-section">
-                <h2>已部署的页面</h2>
-                <div id="loadingMessage" class="loading">正在加载...</div>
-                <div id="errorMessage" class="error-message" style="display: none;"></div>
-                <div id="deployedList" class="deployed-list"></div>
-            </section>
-        </main>
+                <div class="sidebar-section">
+                    <h3 class="sidebar-heading">Create</h3>
+                    <form id="deployForm" class="sidebar-form">
+                        <input type="text" id="pageTitle" name="pageTitle" required placeholder="页面标题">
+                        <input type="text" id="pageDescription" name="pageDescription" placeholder="页面描述（可选）">
+                        <textarea id="htmlCode" name="htmlCode" required placeholder="粘贴 HTML"></textarea>
+                        <button type="submit" class="btn-primary">部署页面</button>
+                    </form>
+                </div>
 
-        <footer>
+                <div class="sidebar-section">
+                    <h3 class="sidebar-heading">Upload</h3>
+                    <div class="upload-box">
+                        <input type="file" id="htmlUpload" accept=".html,.htm,text/html">
+                        <button id="uploadToForm" class="btn-secondary" type="button">导入到创建表单</button>
+                    </div>
+                </div>
+            </aside>
+
+            <main class="content">
+                <section class="list-section">
+                    <div class="list-header">
+                        <h2>我的 HTML</h2>
+                        <div class="list-hint">支持拖动卡片进行排序（本地保存）</div>
+                    </div>
+                    <div id="loadingMessage" class="loading">正在加载...</div>
+                    <div id="errorMessage" class="error-message" style="display: none;"></div>
+                    <div id="deployedList" class="page-cards-container"></div>
+                </section>
+            </main>
+        </div>
+
+        <footer class="app-footer">
             <p>Powered by Notion API</p>
         </footer>
     </div>

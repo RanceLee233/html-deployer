@@ -4,10 +4,20 @@ const API_BASE_URL = window.location.hostname === 'localhost' || window.location
     : '/api';
 
 document.addEventListener('DOMContentLoaded', function() {
+    // 设置左上角标题为页面标题
+    const appTitleEl = document.getElementById('appTitle');
+    if (appTitleEl) appTitleEl.textContent = document.title || 'HTML 部署器';
+
     loadDeployedPages();
-    
+
     const deployForm = document.getElementById('deployForm');
-    deployForm.addEventListener('submit', handleDeploy);
+    if (deployForm) deployForm.addEventListener('submit', handleDeploy);
+
+    const searchInput = document.getElementById('searchInput');
+    if (searchInput) searchInput.addEventListener('input', handleSearch);
+
+    const uploadBtn = document.getElementById('uploadToForm');
+    if (uploadBtn) uploadBtn.addEventListener('click', handleUploadToForm);
 });
 
 async function loadDeployedPages() {
@@ -21,7 +31,10 @@ async function loadDeployedPages() {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
         
-        const pages = await response.json();
+        let pages = await response.json();
+
+        // 应用本地保存的排序
+        pages = applySavedOrder(pages);
         
         loadingMessage.style.display = 'none';
         deployedList.innerHTML = '';
@@ -35,6 +48,9 @@ async function loadDeployedPages() {
             const pageElement = createPageElement(page);
             deployedList.appendChild(pageElement);
         });
+
+        // 初始化拖拽排序
+        initDragAndDrop();
         
     } catch (error) {
         console.error('加载页面时出错:', error);
@@ -48,6 +64,7 @@ function createPageElement(page) {
     const card = document.createElement('div');
     card.className = 'page-card';
     card.dataset.pageId = page.id;
+    card.setAttribute('draggable', 'true');
     
     const createdDate = new Date(page.createdAt).toLocaleString('zh-CN');
     
@@ -82,6 +99,94 @@ function createPageElement(page) {
     `;
     
     return card;
+}
+
+// 搜索过滤
+function handleSearch(e) {
+    const keyword = (e.target.value || '').toLowerCase().trim();
+    const cards = document.querySelectorAll('.page-card');
+    cards.forEach(card => {
+        const title = card.querySelector('.page-title')?.textContent.toLowerCase() || '';
+        const desc = card.querySelector('.page-description')?.textContent.toLowerCase() || '';
+        const show = !keyword || title.includes(keyword) || desc.includes(keyword);
+        card.style.display = show ? '' : 'none';
+    });
+}
+
+// 上传导入到创建表单
+function handleUploadToForm() {
+    const fileInput = document.getElementById('htmlUpload');
+    if (!fileInput || !fileInput.files || !fileInput.files[0]) {
+        alert('请选择一个 HTML 文件');
+        return;
+    }
+    const file = fileInput.files[0];
+    const reader = new FileReader();
+    reader.onload = () => {
+        const content = reader.result;
+        const titleEl = document.getElementById('pageTitle');
+        const codeEl = document.getElementById('htmlCode');
+        const descEl = document.getElementById('pageDescription');
+        if (titleEl) titleEl.value = file.name.replace(/\.(html?|txt)$/i, '');
+        if (descEl && !descEl.value) descEl.value = '上传导入';
+        if (codeEl) codeEl.value = content;
+        showSuccessMessage('已将上传文件内容导入到表单');
+    };
+    reader.readAsText(file, 'utf-8');
+}
+
+// 拖拽排序
+function initDragAndDrop() {
+    const container = document.getElementById('deployedList');
+    const cards = container.querySelectorAll('.page-card');
+    let draggingEl = null;
+
+    cards.forEach(card => {
+        card.addEventListener('dragstart', (e) => {
+            draggingEl = card;
+            card.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+        });
+        card.addEventListener('dragend', () => {
+            if (draggingEl) draggingEl.classList.remove('dragging');
+            container.querySelectorAll('.page-card').forEach(c => c.classList.remove('drag-over'));
+            draggingEl = null;
+            persistCurrentOrder();
+        });
+        card.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            const target = card;
+            if (!draggingEl || draggingEl === target) return;
+            target.classList.add('drag-over');
+            const bounding = target.getBoundingClientRect();
+            const offset = e.clientY - bounding.top;
+            const shouldInsertBefore = offset < bounding.height / 2;
+            if (shouldInsertBefore) {
+                container.insertBefore(draggingEl, target);
+            } else {
+                container.insertBefore(draggingEl, target.nextSibling);
+            }
+        });
+        card.addEventListener('dragleave', () => card.classList.remove('drag-over'));
+        card.addEventListener('drop', (e) => { e.preventDefault(); });
+    });
+}
+
+function persistCurrentOrder() {
+    const container = document.getElementById('deployedList');
+    const order = Array.from(container.querySelectorAll('.page-card')).map(c => c.dataset.pageId);
+    try { localStorage.setItem('pageOrder', JSON.stringify(order)); } catch {}
+}
+
+function applySavedOrder(pages) {
+    try {
+        const saved = JSON.parse(localStorage.getItem('pageOrder') || '[]');
+        if (!Array.isArray(saved) || saved.length === 0) return pages;
+        const map = new Map(pages.map(p => [p.id, p]));
+        const ordered = saved.map(id => map.get(id)).filter(Boolean);
+        const rest = pages.filter(p => !saved.includes(p.id));
+        return [...ordered, ...rest];
+    } catch { return pages; }
 }
 
 async function handleDeploy(event) {
