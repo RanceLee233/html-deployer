@@ -46,40 +46,18 @@ body {
 .sidebar-form textarea { min-height: 140px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .upload-box { display: flex; gap: 8px; align-items: center; }
 .content { min-height: 60vh; }
-.list-header { display: flex; align-items: baseline; justify-content: space-between; }
+.list-header { display: flex; align-items: baseline; justify-content: space-between; padding: 4px 0 12px; }
 .list-hint { font-size: 12px; color: #6b7280; }
 .app-footer { text-align: center; padding: 16px 0 24px; color: #7f8c8d; }
 
-header {
-    text-align: center;
-    margin-bottom: 40px;
-    padding: 20px 0;
-    background-color: white;
-    border-radius: 8px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-}
-
-h1 {
-    color: #2c3e50;
-    font-size: 2.5rem;
-    margin-bottom: 10px;
-}
-
-.subtitle {
-    color: #7f8c8d;
-    font-size: 1.1rem;
-}
+/* 旧版头部相关样式移除，避免覆盖 app-header */
 
 @media (max-width: 900px) {
     .app-body { grid-template-columns: 1fr; }
 }
 
-section {
-    background-color: white;
-    padding: 30px;
-    border-radius: 8px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-}
+/* 列表容器背景透明，保留全局渐变背景 */
+.list-section { background: transparent; padding: 0; box-shadow: none; border-radius: 0; }
 
 h2 {
     color: #2c3e50;
@@ -281,32 +259,38 @@ textarea {
 
 .page-card-actions {
     display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px;
     border-top: 1px solid var(--card-border);
-    background: var(--muted-bg);
+    background: transparent;
 }
 
 .page-card-actions button {
-    flex: 1;
-    padding: 12px 8px;
-    border: none;
-    background: none;
+    flex: 0;
+    padding: 8px 12px;
+    border: 1px solid var(--card-border);
+    background: #fff;
     cursor: pointer;
     font-size: 13px;
-    color: #495057;
-    transition: background-color 0.2s ease;
-    display: flex;
+    color: var(--text-primary);
+    transition: all 0.2s ease;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 4px;
+    gap: 6px;
+    border-radius: 8px;
 }
 
-.page-card-actions button:hover {
-    background-color: #eef2f5;
-}
+.page-card-actions button:hover { background-color: #f3f6f9; }
 
-.page-card-actions button:not(:last-child) {
-    border-right: 1px solid #e1e5e9;
-}
+/* 三个操作按钮主题色：查看(主)、复制(强调)、删除(危险) */
+.btn-view { border-color: var(--primary); color: #fff; background: var(--primary); }
+.btn-view:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
+.btn-copy { border-color: var(--accent); color: var(--accent); background: #fff; }
+.btn-copy:hover { background: var(--accent); color: #fff; }
+.btn-delete { border-color: var(--danger); color: var(--danger); background: #fff; }
+.btn-delete:hover { background: var(--danger); color: #fff; }
 
 .btn-view:hover {
     color: var(--primary);
@@ -382,14 +366,7 @@ textarea {
     color: #fff;
 }
 
-footer {
-    text-align: center;
-    padding: 20px;
-    color: #7f8c8d;
-    background-color: white;
-    border-radius: 8px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-}
+/* 使用 .app-footer，自定义 footer 标签样式移除 */
 
 .success-message {
     background-color: var(--accent);
