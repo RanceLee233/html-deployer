@@ -258,18 +258,17 @@ textarea {
 }
 
 .page-card-actions {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 12px;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0;
+    padding: 0;
     border-top: 1px solid var(--card-border);
     background: transparent;
 }
 
 .page-card-actions button {
-    flex: 0;
-    padding: 8px 12px;
-    border: 1px solid var(--card-border);
+    padding: 12px 10px;
+    border: none;
     background: #fff;
     cursor: pointer;
     font-size: 13px;
@@ -279,9 +278,10 @@ textarea {
     align-items: center;
     justify-content: center;
     gap: 6px;
-    border-radius: 8px;
+    border-right: 1px solid var(--card-border);
 }
 
+.page-card-actions button:last-child { border-right: none; }
 .page-card-actions button:hover { background-color: #f3f6f9; }
 
 /* 三个操作按钮主题色：查看(主)、复制(强调)、删除(危险) */
@@ -289,6 +289,8 @@ textarea {
 .btn-view:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
 .btn-copy { border-color: var(--accent); color: var(--accent); background: #fff; }
 .btn-copy:hover { background: var(--accent); color: #fff; }
+.btn-edit { border-color: var(--primary); color: var(--primary); background: #fff; }
+.btn-edit:hover { background: var(--primary); color: #fff; }
 .btn-delete { border-color: var(--danger); color: var(--danger); background: #fff; }
 .btn-delete:hover { background: var(--danger); color: #fff; }
 
@@ -376,3 +378,12 @@ textarea {
     margin-bottom: 20px;
     text-align: center;
 }
+
+/* Modal */
+.modal{position:fixed;inset:0;z-index:50}
+.modal-backdrop{position:absolute;inset:0;background:rgba(0,0,0,0.35)}
+.modal-dialog{position:relative;margin:8vh auto;background:#fff;border:1px solid var(--card-border);border-radius:12px;max-width:880px;width:92%;box-shadow:0 10px 30px rgba(0,0,0,.15);overflow:hidden}
+.modal-header,.modal-footer{padding:14px 16px;background:#f9fafb;border-bottom:1px solid var(--card-border)}
+.modal-footer{border-top:1px solid var(--card-border);border-bottom:none;display:flex;justify-content:flex-end;gap:10px}
+.modal-body{padding:16px}
+.modal-close{background:none;border:none;font-size:20px;cursor:pointer;color:#888}

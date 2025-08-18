@@ -16,8 +16,12 @@ document.addEventListener('DOMContentLoaded', function() {
     const searchInput = document.getElementById('searchInput');
     if (searchInput) searchInput.addEventListener('input', handleSearch);
 
-    const uploadBtn = document.getElementById('uploadToForm');
-    if (uploadBtn) uploadBtn.addEventListener('click', handleUploadToForm);
+    // 编辑模态框通用关闭
+    document.body.addEventListener('click', (e)=>{
+        if (e.target.matches('[data-close]')) closeEditModal();
+    });
+    const saveBtn = document.getElementById('editSaveBtn');
+    if (saveBtn) saveBtn.addEventListener('click', submitEdit);
 });
 
 async function loadDeployedPages() {
@@ -92,6 +96,9 @@ function createPageElement(page) {
             <button class="btn-copy" onclick="copyShareLink('${page.shareUrl}')">
                 <i>🔗</i> 复制
             </button>
+            <button class="btn-edit" onclick="openEditModal('${page.id}')">
+                <i>✏️</i> 编辑
+            </button>
             <button class="btn-delete" onclick="deletePage('${page.id}')">
                 <i>🗑</i> 删除
             </button>
@@ -111,28 +118,6 @@ function handleSearch(e) {
         const show = !keyword || title.includes(keyword) || desc.includes(keyword);
         card.style.display = show ? '' : 'none';
     });
-}
-
-// 上传导入到创建表单
-function handleUploadToForm() {
-    const fileInput = document.getElementById('htmlUpload');
-    if (!fileInput || !fileInput.files || !fileInput.files[0]) {
-        alert('请选择一个 HTML 文件');
-        return;
-    }
-    const file = fileInput.files[0];
-    const reader = new FileReader();
-    reader.onload = () => {
-        const content = reader.result;
-        const titleEl = document.getElementById('pageTitle');
-        const codeEl = document.getElementById('htmlCode');
-        const descEl = document.getElementById('pageDescription');
-        if (titleEl) titleEl.value = file.name.replace(/\.(html?|txt)$/i, '');
-        if (descEl && !descEl.value) descEl.value = '上传导入';
-        if (codeEl) codeEl.value = content;
-        showSuccessMessage('已将上传文件内容导入到表单');
-    };
-    reader.readAsText(file, 'utf-8');
 }
 
 // 拖拽排序
@@ -176,6 +161,8 @@ function persistCurrentOrder() {
     const container = document.getElementById('deployedList');
     const order = Array.from(container.querySelectorAll('.page-card')).map(c => c.dataset.pageId);
     try { localStorage.setItem('pageOrder', JSON.stringify(order)); } catch {}
+    // 同步到服务器
+    saveOrderToServer(order);
 }
 
 function applySavedOrder(pages) {
@@ -187,6 +174,56 @@ function applySavedOrder(pages) {
         const rest = pages.filter(p => !saved.includes(p.id));
         return [...ordered, ...rest];
     } catch { return pages; }
+}
+
+// === 编辑模态 ===
+let editingPageId = null;
+async function openEditModal(pageId){
+    editingPageId = pageId;
+    try{
+        const res = await fetch(`${API_BASE_URL}/deployments/${pageId}`);
+        if(!res.ok) throw new Error('加载页面详情失败');
+        const data = await res.json();
+        document.getElementById('editTitle').value = data.title || '';
+        document.getElementById('editDescription').value = data.description || '';
+        document.getElementById('editHtml').value = data.htmlContent || '';
+        showEditModal();
+    }catch(e){
+        alert(e.message);
+    }
+}
+function showEditModal(){
+    const modal = document.getElementById('editModal');
+    if(modal) modal.style.display = 'block';
+}
+function closeEditModal(){
+    const modal = document.getElementById('editModal');
+    if(modal) modal.style.display = 'none';
+}
+async function submitEdit(){
+    if(!editingPageId) return;
+    const payload = {
+        title: document.getElementById('editTitle').value,
+        description: document.getElementById('editDescription').value,
+        htmlContent: document.getElementById('editHtml').value,
+    };
+    try{
+        const res = await fetch(`${API_BASE_URL}/deployments/${editingPageId}`,{
+            method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)
+        });
+        if(!res.ok) throw new Error('保存失败');
+        closeEditModal();
+        showSuccessMessage('已保存修改');
+        loadDeployedPages();
+    }catch(e){ alert(e.message); }
+}
+
+async function saveOrderToServer(order){
+    try{
+        await fetch(`${API_BASE_URL}/deployments/order`,{
+            method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ order })
+        });
+    }catch(e){ console.warn('排序写回失败，仅本地保存：', e.message); }
 }
 
 async function handleDeploy(event) {

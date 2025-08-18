@@ -175,6 +175,11 @@ app.get('/api/deployments', async (req, res) => {
         const response = await notion.databases.query({
             database_id: databaseId,
             sorts: [
+                // 优先按“排序”升序
+                {
+                    property: '排序',
+                    direction: 'ascending',
+                },
                 {
                     property: '创建时间',
                     direction: 'descending',
@@ -198,7 +203,8 @@ app.get('/api/deployments', async (req, res) => {
                 description: properties.描述?.rich_text[0]?.plain_text || '',
                 createdAt: page.created_time,
                 shareUrl: properties['分享链接']?.rich_text[0]?.plain_text || '',
-                pageId: properties['页面ID']?.rich_text[0]?.plain_text || ''
+                pageId: properties['页面ID']?.rich_text[0]?.plain_text || '',
+                sort: properties['排序']?.number ?? null,
             };
         });
 
@@ -211,6 +217,34 @@ app.get('/api/deployments', async (req, res) => {
             details: error.message,
             code: error.code
         });
+    }
+});
+
+// 批量更新排序
+app.post('/api/deployments/order', async (req, res) => {
+    try{
+        const { order } = req.body || {};
+        if(!Array.isArray(order)) return res.status(400).json({ error: '参数错误：order 需为数组（Notion 页ID数组）' });
+
+        // 简单重排：10,20,30...
+        const results = [];
+        for(let i=0;i<order.length;i++){
+            const pageId = order[i];
+            try{
+                const sortValue = (i+1)*10;
+                await notion.pages.update({
+                    page_id: pageId,
+                    properties: { '排序': { number: sortValue } }
+                });
+                results.push({ id: pageId, ok: true, sort: sortValue });
+            }catch(e){
+                results.push({ id: pageId, ok: false, error: e.message });
+            }
+        }
+        res.json({ success: true, results });
+    }catch(error){
+        console.error('批量更新排序失败:', error);
+        res.status(500).json({ error: '批量更新排序失败', details: error.message });
     }
 });
 
@@ -490,6 +524,60 @@ app.get('/api/deployments/:id', async (req, res) => {
     } catch (error) {
         console.error('获取页面详情失败:', error);
         res.status(500).json({ error: '无法获取页面详情' });
+    }
+});
+
+// 更新单个页面（标题/描述/HTML）
+app.put('/api/deployments/:id', async (req, res) => {
+    const pageId = req.params.id;
+    const { title, description, htmlContent } = req.body || {};
+    if(!title || !htmlContent){
+        return res.status(400).json({ error: '标题与HTML内容不能为空' });
+    }
+    try{
+        // 先更新属性
+        await notion.pages.update({
+            page_id: pageId,
+            properties: {
+                '页面标题': { title: [{ text: { content: title } }] },
+                '描述': { rich_text: [{ text: { content: description || '' } }] }
+            }
+        });
+
+        // 再更新正文：删除现有子块，重建
+        try{
+            const children = await notion.blocks.children.list({ block_id: pageId });
+            for(const block of children.results){
+                try{ await notion.blocks.delete({ block_id: block.id }); }catch(e){ /* 忽略单个失败 */ }
+            }
+
+            const maxChunkSize = 2000;
+            const htmlChunks = [];
+            for(let i=0;i<htmlContent.length;i+=maxChunkSize){
+                htmlChunks.push(htmlContent.substring(i, i+maxChunkSize));
+            }
+            const newChildren = [
+                { object:'block', type:'heading_3', heading_3:{ rich_text:[{ type:'text', text:{ content:'HTML内容' } }] } }
+            ];
+            htmlChunks.forEach(chunk => newChildren.push({
+                object:'block', type:'paragraph', paragraph:{ rich_text:[{ type:'text', text:{ content: chunk } }] }
+            }));
+            await notion.blocks.children.append({ block_id: pageId, children: newChildren });
+        }catch(blockErr){
+            // 回退：写到“完整HTML内容”字段（截断）
+            const truncated = htmlContent.length>1900? (htmlContent.substring(0,1900)+'... [内容过长，已截断]') : htmlContent;
+            try{
+                await notion.pages.update({
+                    page_id: pageId,
+                    properties: { '完整HTML内容': { rich_text: [{ text: { content: truncated } }] } }
+                });
+            }catch(e){ /* 忽略 */ }
+        }
+
+        res.json({ success:true });
+    }catch(error){
+        console.error('更新页面失败:', error);
+        res.status(500).json({ error:'更新页面失败', details: error.message });
     }
 });
 
