@@ -1,21 +1,20 @@
 require('dotenv').config();
 const express = require('express');
-const { Client } = require('@notionhq/client');
+const { createClient } = require('@supabase/supabase-js');
 const cors = require('cors');
 const crypto = require('crypto');
 
 const app = express();
 const port = process.env.PORT || 3000;
 
-// 初始化Notion客户端
-const notion = new Client({ auth: process.env.NOTION_API_KEY });
-const databaseId = process.env.NOTION_DATABASE_ID;
+// 初始化Supabase客户端
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_ANON_KEY;
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 // 中间件
 app.use(cors());
 app.use(express.json());
-
-
 
 // 生成HTML内容的哈希值（支持用标题生成）
 function generateHash(content) {
@@ -29,117 +28,32 @@ function generateHashFromTitle(title) {
     return crypto.createHash('md5').update(title).digest('hex').substring(0, 8);
 }
 
-// 保存HTML内容到Notion数据库（使用新字段存储完整内容）
-async function saveHtmlContent(content) {
-    const hash = generateHash(content);
-    return hash;
-}
-
-// 从Notion数据库读取HTML内容
-async function getHtmlContent(hash) {
-    try {
-        // 通过哈希值查找对应的Notion页面
-        const response = await notion.databases.query({
-            database_id: databaseId,
-            filter: {
-                property: 'HTML哈希值',
-                rich_text: {
-                    equals: hash
-                }
-            }
-        });
-        
-        if (response.results.length > 0) {
-            const page = response.results[0];
-            
-            // 1. 优先从页面正文中获取HTML内容
-            try {
-                const pageContent = await notion.blocks.children.list({
-                    block_id: page.id
-                });
-                
-                // 查找第一个代码块或文本块作为HTML内容
-                for (const block of pageContent.results) {
-                    if (block.type === 'code' && block.code) {
-                        return block.code.rich_text[0]?.plain_text || '';
-                    }
-                    if (block.type === 'paragraph' && block.paragraph) {
-                        return block.paragraph.rich_text[0]?.plain_text || '';
-                    }
-                }
-            } catch (contentError) {
-                console.log('页面正文读取失败，尝试字段读取');
-            }
-            
-            // 2. 从属性字段中获取HTML
-            const content = page.properties['完整HTML内容']?.rich_text[0]?.plain_text;
-            if (content) {
-                return content;
-            }
-            
-            // 3. 如果没有完整HTML内容字段，尝试旧字段
-            const oldContent = page.properties['HTML代码']?.rich_text[0]?.plain_text;
-            if (oldContent) {
-                return oldContent;
-            }
-        }
-        
-        return null;
-    } catch (error) {
-        console.error('从Notion读取HTML内容失败:', error);
-        throw error;
-    }
-}
-
-// 删除HTML内容（通过归档Notion页面）
-async function deleteHtmlContent(hash) {
-    try {
-        const response = await notion.databases.query({
-            database_id: databaseId,
-            filter: {
-                property: 'HTML哈希值',
-                rich_text: {
-                    equals: hash
-                }
-            }
-        });
-        
-        if (response.results.length > 0) {
-            const pageId = response.results[0].id;
-            await notion.pages.update({
-                page_id: pageId,
-                archived: true
-            });
-            return true;
-        }
-        
-        return false;
-    } catch (error) {
-        console.error('删除HTML内容失败:', error);
-        throw error;
-    }
-}
-
 // --- API 路由 ---
 
 // 健康检查端点
 app.get('/api/health', async (req, res) => {
     try {
         // 测试数据库连接
-        const db = await notion.databases.retrieve({ database_id: databaseId });
+        const { data, error } = await supabase
+            .from('html_deployer_pages')
+            .select('id')
+            .limit(1);
         
+        if (error) {
+            throw error;
+        }
+
         res.json({
             status: 'ok',
             timestamp: new Date().toISOString(),
             environment: {
-                hasNotionApiKey: !!process.env.NOTION_API_KEY,
-                hasNotionDatabaseId: !!process.env.NOTION_DATABASE_ID,
-                notionDatabaseId: process.env.NOTION_DATABASE_ID || 'not set',
-                databaseName: db.title[0]?.plain_text || '未知'
+                hasSupabaseUrl: !!process.env.SUPABASE_URL,
+                hasSupabaseKey: !!process.env.SUPABASE_ANON_KEY,
+                supabaseUrl: process.env.SUPABASE_URL || 'not set'
             },
             database: {
-                title: db.title[0]?.plain_text || '无标题',
-                properties: Object.keys(db.properties)
+                name: 'html_deployer_pages',
+                connected: true
             }
         });
     } catch (error) {
@@ -157,63 +71,50 @@ app.get('/api/health', async (req, res) => {
 app.get('/api/deployments', async (req, res) => {
     try {
         // 添加环境变量检查
-        if (!process.env.NOTION_API_KEY || !process.env.NOTION_DATABASE_ID) {
+        if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
             console.error('环境变量缺失:', {
-                hasApiKey: !!process.env.NOTION_API_KEY,
-                hasDatabaseId: !!process.env.NOTION_DATABASE_ID
+                hasUrl: !!process.env.SUPABASE_URL,
+                hasKey: !!process.env.SUPABASE_ANON_KEY
             });
             return res.status(500).json({ 
                 error: '服务器配置错误：缺少必需的环境变量',
                 details: {
-                    hasApiKey: !!process.env.NOTION_API_KEY,
-                    hasDatabaseId: !!process.env.NOTION_DATABASE_ID
+                    hasUrl: !!process.env.SUPABASE_URL,
+                    hasKey: !!process.env.SUPABASE_ANON_KEY
                 }
             });
         }
 
-        console.log('尝试连接Notion数据库:', databaseId);
-        const response = await notion.databases.query({
-            database_id: databaseId,
-            sorts: [
-                // 优先按“排序”升序
-                {
-                    property: '排序',
-                    direction: 'ascending',
-                },
-                {
-                    property: '创建时间',
-                    direction: 'descending',
-                },
-            ],
-        });
+        console.log('尝试连接Supabase数据库...');
+        const { data: pages, error } = await supabase
+            .from('html_deployer_pages')
+            .select('*')
+            .order('sort_order', { ascending: true })
+            .order('created_at', { ascending: false });
 
-        // 格式化返回的数据 - 兼容旧数据库结构
-        const pages = response.results.map(page => {
-            const properties = page.properties;
-            
-            // 兼容旧和新数据库结构
-            const hasNewStructure = properties['HTML哈希值'] !== undefined;
-            const hasOldStructure = properties['HTML代码'] !== undefined;
-            
-            return {
-                id: page.id,
-                title: properties.页面标题?.title[0]?.plain_text || '无标题',
-                htmlHash: hasNewStructure ? properties['HTML哈希值']?.rich_text[0]?.plain_text || '' : '',
-                htmlContent: '', // 不在列表中显示HTML内容，以提高性能
-                description: properties.描述?.rich_text[0]?.plain_text || '',
-                createdAt: page.created_time,
-                shareUrl: properties['分享链接']?.rich_text[0]?.plain_text || '',
-                pageId: properties['页面ID']?.rich_text[0]?.plain_text || '',
-                sort: properties['排序']?.number ?? null,
-            };
-        });
+        if (error) {
+            throw error;
+        }
 
-        console.log(`成功获取 ${pages.length} 个页面`);
-        res.json(pages);
+        // 格式化返回的数据，保持与原来API的兼容性
+        const formattedPages = pages.map(page => ({
+            id: page.id,
+            title: page.title || '无标题',
+            htmlHash: page.html_hash || '',
+            htmlContent: '', // 不在列表中显示HTML内容，以提高性能
+            description: page.description || '',
+            createdAt: page.created_at,
+            shareUrl: page.share_url || '',
+            pageId: page.page_id || '',
+            sort: page.sort_order || null,
+        }));
+
+        console.log(`成功获取 ${formattedPages.length} 个页面`);
+        res.json(formattedPages);
     } catch (error) {
         console.error('获取页面失败:', error);
         res.status(500).json({ 
-            error: '无法从Notion获取页面',
+            error: '无法从数据库获取页面',
             details: error.message,
             code: error.code
         });
@@ -222,27 +123,32 @@ app.get('/api/deployments', async (req, res) => {
 
 // 批量更新排序
 app.post('/api/deployments/order', async (req, res) => {
-    try{
+    try {
         const { order } = req.body || {};
-        if(!Array.isArray(order)) return res.status(400).json({ error: '参数错误：order 需为数组（Notion 页ID数组）' });
+        if (!Array.isArray(order)) {
+            return res.status(400).json({ error: '参数错误：order 需为数组（页面ID数组）' });
+        }
 
         // 简单重排：10,20,30...
         const results = [];
-        for(let i=0;i<order.length;i++){
+        for (let i = 0; i < order.length; i++) {
             const pageId = order[i];
-            try{
-                const sortValue = (i+1)*10;
-                await notion.pages.update({
-                    page_id: pageId,
-                    properties: { '排序': { number: sortValue } }
-                });
+            try {
+                const sortValue = (i + 1) * 10;
+                const { error } = await supabase
+                    .from('html_deployer_pages')
+                    .update({ sort_order: sortValue })
+                    .eq('id', pageId);
+                
+                if (error) throw error;
+                
                 results.push({ id: pageId, ok: true, sort: sortValue });
-            }catch(e){
+            } catch (e) {
                 results.push({ id: pageId, ok: false, error: e.message });
             }
         }
         res.json({ success: true, results });
-    }catch(error){
+    } catch (error) {
         console.error('批量更新排序失败:', error);
         res.status(500).json({ error: '批量更新排序失败', details: error.message });
     }
@@ -259,51 +165,41 @@ app.post('/api/deployments/update-share-urls', async (req, res) => {
         }
 
         // 获取所有页面
-        const response = await notion.databases.query({
-            database_id: databaseId,
-        });
+        const { data: pages, error } = await supabase
+            .from('html_deployer_pages')
+            .select('*');
+        
+        if (error) throw error;
 
         const results = [];
         let updatedCount = 0;
 
-        for (const page of response.results) {
+        for (const page of pages) {
             try {
-                const properties = page.properties;
-                const htmlHash = properties['HTML哈希值']?.rich_text[0]?.plain_text;
-                const currentShareUrl = properties['分享链接']?.rich_text[0]?.plain_text;
-                
-                if (htmlHash) {
-                    const newShareUrl = `${customDomain}/view/${htmlHash}`;
+                if (page.html_hash) {
+                    const newShareUrl = `${customDomain}/view/${page.html_hash}`;
                     
                     // 只有当链接确实需要更新时才更新
-                    if (currentShareUrl !== newShareUrl) {
-                        await notion.pages.update({
-                            page_id: page.id,
-                            properties: {
-                                '分享链接': {
-                                    rich_text: [
-                                        {
-                                            text: {
-                                                content: newShareUrl,
-                                            },
-                                        },
-                                    ],
-                                },
-                            },
-                        });
+                    if (page.share_url !== newShareUrl) {
+                        const { error: updateError } = await supabase
+                            .from('html_deployer_pages')
+                            .update({ share_url: newShareUrl })
+                            .eq('id', page.id);
+                        
+                        if (updateError) throw updateError;
                         
                         updatedCount++;
                         results.push({
                             id: page.id,
-                            title: properties.页面标题?.title[0]?.plain_text || '无标题',
-                            oldUrl: currentShareUrl,
+                            title: page.title || '无标题',
+                            oldUrl: page.share_url,
                             newUrl: newShareUrl,
                             success: true
                         });
                     } else {
                         results.push({
                             id: page.id,
-                            title: properties.页面标题?.title[0]?.plain_text || '无标题',
+                            title: page.title || '无标题',
                             skipped: true,
                             reason: '链接已经是正确的域名'
                         });
@@ -311,7 +207,7 @@ app.post('/api/deployments/update-share-urls', async (req, res) => {
                 } else {
                     results.push({
                         id: page.id,
-                        title: properties.页面标题?.title[0]?.plain_text || '无标题',
+                        title: page.title || '无标题',
                         skipped: true,
                         reason: '页面没有哈希值'
                     });
@@ -319,7 +215,7 @@ app.post('/api/deployments/update-share-urls', async (req, res) => {
             } catch (error) {
                 results.push({
                     id: page.id,
-                    title: page.properties.页面标题?.title[0]?.plain_text || '无标题',
+                    title: page.title || '无标题',
                     success: false,
                     error: error.message
                 });
@@ -330,7 +226,7 @@ app.post('/api/deployments/update-share-urls', async (req, res) => {
             success: true,
             message: `成功更新 ${updatedCount} 个页面的分享链接`,
             customDomain: customDomain,
-            totalPages: response.results.length,
+            totalPages: pages.length,
             updatedCount: updatedCount,
             results: results
         });
@@ -367,185 +263,43 @@ app.post('/api/deploy', async (req, res) => {
         // 查询现有页面的最小排序值，新页面排在最前面
         let newSortValue = 5; // 默认值
         try {
-            const existingPages = await notion.databases.query({
-                database_id: databaseId,
-                sorts: [{ property: '排序', direction: 'ascending' }],
-                page_size: 1
-            });
+            const { data: existingPages, error } = await supabase
+                .from('html_deployer_pages')
+                .select('sort_order')
+                .order('sort_order', { ascending: true })
+                .limit(1);
             
-            if (existingPages.results.length > 0) {
-                const firstPage = existingPages.results[0];
-                const currentMinSort = firstPage.properties['排序']?.number || 10;
+            if (!error && existingPages.length > 0) {
+                const currentMinSort = existingPages[0].sort_order || 10;
                 newSortValue = Math.max(1, currentMinSort - 5); // 确保新页面排在最前面
             }
         } catch (sortError) {
             console.log('获取排序值失败，使用默认值:', sortError.message);
         }
         
-// 获取数据库结构以确定使用哪种字段
-        const database = await notion.databases.retrieve({
-            database_id: databaseId
-        });
-        
-        const hasNewStructure = database.properties['HTML哈希值'] !== undefined;
-        const properties = {
-            '页面标题': {
-                title: [
-                    {
-                        text: {
-                            content: title,
-                        },
-                    },
-                ],
-            },
-            '描述': {
-                rich_text: [
-                    {
-                        text: {
-                            content: description || '',
-                        },
-                    },
-                ],
-            },
-        };
-        
-        // 新架构：使用哈希值，HTML内容存储在页面正文中
-        if (hasNewStructure) {
-            properties['HTML哈希值'] = {
-                rich_text: [
-                    {
-                        text: {
-                            content: htmlHash,
-                        },
-                    },
-                ],
-            };
-            // 不再在字段中存储HTML内容，改为存储在页面正文
-            properties['页面ID'] = {
-                rich_text: [
-                    {
-                        text: {
-                            content: pageId,
-                        },
-                    },
-                ],
-            };
-            properties['分享链接'] = {
-                rich_text: [
-                    {
-                        text: {
-                            content: shareUrl,
-                        },
-                    },
-                ],
-            };
-            // 添加排序值，让新页面排在最前面
-            properties['排序'] = {
-                number: newSortValue,
-            };
-        } else {
-            // 旧架构：使用HTML代码字段（截断处理）
-            const truncatedHtml = htmlContent.length > 2000 ? htmlContent.substring(0, 2000) + '...' : htmlContent;
-            properties['HTML代码'] = {
-                rich_text: [
-                    {
-                        text: {
-                            content: truncatedHtml,
-                        },
-                    },
-                ],
-            };
-        }
-        
-        // 在Notion中创建记录
-        const response = await notion.pages.create({
-            parent: { database_id: databaseId },
-            properties: properties,
-        });
-        
-        // 如果是新架构，将HTML内容添加到页面正文中
-        if (hasNewStructure) {
-            try {
-                // 如果HTML内容过长，分段存储
-                const maxChunkSize = 2000; // Notion单个文本块限制
-                const htmlChunks = [];
-                
-                for (let i = 0; i < htmlContent.length; i += maxChunkSize) {
-                    htmlChunks.push(htmlContent.substring(i, i + maxChunkSize));
+        // 在Supabase中创建记录
+        const { data: newPage, error } = await supabase
+            .from('html_deployer_pages')
+            .insert([
+                {
+                    title: title,
+                    html_content: htmlContent,
+                    html_hash: htmlHash,
+                    description: description || '',
+                    page_id: pageId,
+                    share_url: shareUrl,
+                    sort_order: newSortValue
                 }
-                
-                console.log(`HTML内容长度: ${htmlContent.length}, 分为 ${htmlChunks.length} 段`);
-                
-                const children = [];
-                
-                // 添加标题说明
-                children.push({
-                    object: 'block',
-                    type: 'heading_3',
-                    heading_3: {
-                        rich_text: [{
-                            type: 'text',
-                            text: { content: 'HTML内容' }
-                        }]
-                    }
-                });
-                
-                // 将每个分段作为段落添加
-                htmlChunks.forEach((chunk, index) => {
-                    children.push({
-                        object: 'block',
-                        type: 'paragraph',
-                        paragraph: {
-                            rich_text: [{
-                                type: 'text',
-                                text: {
-                                    content: chunk
-                                }
-                            }]
-                        }
-                    });
-                });
-                
-                // 批量添加到页面
-                await notion.blocks.children.append({
-                    block_id: response.id,
-                    children: children
-                });
-                
-                console.log(`HTML内容已成功添加到页面正文（${htmlChunks.length}个分段）`);
-            } catch (blockError) {
-                console.error('添加页面正文失败:', blockError);
-                console.error('详细错误:', JSON.stringify(blockError, null, 2));
-                
-                // 如果添加正文失败，回退到字段存储（截断）
-                try {
-                    console.log('尝试回退到字段存储方案...');
-                    const truncatedHtml = htmlContent.substring(0, 1900) + '... [内容过长，已截断]';
-                    
-                    await notion.pages.update({
-                        page_id: response.id,
-                        properties: {
-                            '完整HTML内容': {
-                                rich_text: [{
-                                    text: {
-                                        content: truncatedHtml
-                                    }
-                                }]
-                            }
-                        }
-                    });
-                    
-                    console.log('已回退到截断存储方案');
-                } catch (fallbackError) {
-                    console.error('回退方案也失败:', fallbackError);
-                }
-            }
-        }
+            ])
+            .select()
+            .single();
+        
+        if (error) throw error;
         
         // 返回格式化的响应
         res.status(201).json({
             success: true,
-            id: response.id,
+            id: newPage.id,
             pageId: pageId,
             htmlHash: htmlHash,
             shareUrl: shareUrl,
@@ -554,7 +308,7 @@ app.post('/api/deploy', async (req, res) => {
     } catch (error) {
         console.error('创建页面失败:', error);
         res.status(500).json({ 
-            error: '无法在Notion中创建页面',
+            error: '无法在数据库中创建页面',
             details: error.message,
             code: error.code
         });
@@ -566,86 +320,35 @@ app.get('/api/deployments/:id', async (req, res) => {
     const pageId = req.params.id;
     
     try {
-        const response = await notion.pages.retrieve({ page_id: pageId });
+        const { data: page, error } = await supabase
+            .from('html_deployer_pages')
+            .select('*')
+            .eq('id', pageId)
+            .single();
         
-        // 兼容旧和新数据库结构
-        const properties = response.properties;
-        let htmlContent = '';
-        let htmlHash = '';
-        
-        // 检查是新结构还是旧结构
-        if (properties['HTML哈希值']) {
-            // 新结构：从页面正文中获取HTML内容
-            htmlHash = properties['HTML哈希值']?.rich_text[0]?.plain_text || '';
-            
-            // 从页面正文中读取HTML内容
-            try {
-                const pageContent = await notion.blocks.children.list({
-                    block_id: response.id
-                });
-                
-                // 合并所有段落内容作为HTML
-                const contentParts = [];
-                let foundHtmlSection = false;
-                
-                for (const block of pageContent.results) {
-                    // 跳过标题，查找段落内容
-                    if (block.type === 'heading_3' && block.heading_3) {
-                        const headingText = block.heading_3.rich_text[0]?.plain_text || '';
-                        if (headingText === 'HTML内容') {
-                            foundHtmlSection = true;
-                            continue;
-                        }
-                    }
-                    
-                    // 在HTML内容区域中收集段落
-                    if (foundHtmlSection && block.type === 'paragraph' && block.paragraph) {
-                        const text = block.paragraph.rich_text[0]?.plain_text || '';
-                        if (text) {
-                            contentParts.push(text);
-                        }
-                    }
-                    
-                    // 兼容旧的代码块格式
-                    if (block.type === 'code' && block.code) {
-                        contentParts.push(block.code.rich_text[0]?.plain_text || '');
-                    }
-                }
-                
-                if (contentParts.length > 0) {
-                    htmlContent = contentParts.join('');
-                    console.log(`从页面正文读取到HTML内容，总长度: ${htmlContent.length}`);
-                }
-            } catch (contentError) {
-                console.error('从页面正文读取HTML失败:', contentError);
-                
-                // 尝试从字段中读取（回退方案）
-                if (response.properties['完整HTML内容']) {
-                    htmlContent = response.properties['完整HTML内容']?.rich_text[0]?.plain_text || '';
-                    console.log('从回退字段读取到HTML内容');
-                }
+        if (error) {
+            if (error.code === 'PGRST116') {
+                return res.status(404).json({ error: '页面不存在' });
             }
-        } else if (properties['HTML代码']) {
-            // 旧结构：直接存储HTML代码
-            htmlContent = properties['HTML代码']?.rich_text[0]?.plain_text || '';
+            throw error;
         }
         
-        // 格式化返回的数据
-        const page = {
-            id: response.id,
-            title: response.properties.页面标题.title[0]?.plain_text || '无标题',
-            htmlContent: htmlContent,
-            htmlHash: htmlHash,
-            description: response.properties.描述?.rich_text[0]?.plain_text || '',
-            createdAt: response.created_time,
-            shareUrl: response.properties['分享链接']?.rich_text[0]?.plain_text || '',
-            pageId: response.properties['页面ID']?.rich_text[0]?.plain_text || ''
+        // 格式化返回的数据，保持与原来API的兼容性
+        const formattedPage = {
+            id: page.id,
+            title: page.title || '无标题',
+            htmlContent: page.html_content || '',
+            htmlHash: page.html_hash || '',
+            description: page.description || '',
+            createdAt: page.created_at,
+            shareUrl: page.share_url || '',
+            pageId: page.page_id || ''
         };
         
-        res.json(page);
+        res.json(formattedPage);
     } catch (error) {
         console.error('获取页面详情失败:', error);
-        res.status(500).json({ error: '无法获取页面详情' });
+        res.status(500).json({ error: '无法获取页面详情', details: error.message });
     }
 });
 
@@ -653,53 +356,27 @@ app.get('/api/deployments/:id', async (req, res) => {
 app.put('/api/deployments/:id', async (req, res) => {
     const pageId = req.params.id;
     const { title, description, htmlContent } = req.body || {};
-    if(!title || !htmlContent){
+    
+    if (!title || !htmlContent) {
         return res.status(400).json({ error: '标题与HTML内容不能为空' });
     }
-    try{
-        // 先更新属性
-        await notion.pages.update({
-            page_id: pageId,
-            properties: {
-                '页面标题': { title: [{ text: { content: title } }] },
-                '描述': { rich_text: [{ text: { content: description || '' } }] }
-            }
-        });
+    
+    try {
+        const { error } = await supabase
+            .from('html_deployer_pages')
+            .update({
+                title: title,
+                description: description || '',
+                html_content: htmlContent
+            })
+            .eq('id', pageId);
+        
+        if (error) throw error;
 
-        // 再更新正文：删除现有子块，重建
-        try{
-            const children = await notion.blocks.children.list({ block_id: pageId });
-            for(const block of children.results){
-                try{ await notion.blocks.delete({ block_id: block.id }); }catch(e){ /* 忽略单个失败 */ }
-            }
-
-            const maxChunkSize = 2000;
-            const htmlChunks = [];
-            for(let i=0;i<htmlContent.length;i+=maxChunkSize){
-                htmlChunks.push(htmlContent.substring(i, i+maxChunkSize));
-            }
-            const newChildren = [
-                { object:'block', type:'heading_3', heading_3:{ rich_text:[{ type:'text', text:{ content:'HTML内容' } }] } }
-            ];
-            htmlChunks.forEach(chunk => newChildren.push({
-                object:'block', type:'paragraph', paragraph:{ rich_text:[{ type:'text', text:{ content: chunk } }] }
-            }));
-            await notion.blocks.children.append({ block_id: pageId, children: newChildren });
-        }catch(blockErr){
-            // 回退：写到“完整HTML内容”字段（截断）
-            const truncated = htmlContent.length>1900? (htmlContent.substring(0,1900)+'... [内容过长，已截断]') : htmlContent;
-            try{
-                await notion.pages.update({
-                    page_id: pageId,
-                    properties: { '完整HTML内容': { rich_text: [{ text: { content: truncated } }] } }
-                });
-            }catch(e){ /* 忽略 */ }
-        }
-
-        res.json({ success:true });
-    }catch(error){
+        res.json({ success: true });
+    } catch (error) {
         console.error('更新页面失败:', error);
-        res.status(500).json({ error:'更新页面失败', details: error.message });
+        res.status(500).json({ error: '更新页面失败', details: error.message });
     }
 });
 
@@ -708,20 +385,17 @@ app.delete('/api/deployments/:id', async (req, res) => {
     const pageId = req.params.id;
     
     try {
-        // 首先获取页面信息
-        const pageResponse = await notion.pages.retrieve({ page_id: pageId });
-        const properties = pageResponse.properties;
+        const { error } = await supabase
+            .from('html_deployer_pages')
+            .delete()
+            .eq('id', pageId);
         
-        // 直接归档Notion中的页面（不再需要删除文件）
-        await notion.pages.update({
-            page_id: pageId,
-            archived: true
-        });
+        if (error) throw error;
         
         res.json({ success: true });
     } catch (error) {
         console.error('删除页面失败:', error);
-        res.status(500).json({ error: '无法删除页面' });
+        res.status(500).json({ error: '无法删除页面', details: error.message });
     }
 });
 
@@ -731,31 +405,26 @@ app.get('/view/:hash', async (req, res) => {
     
     try {
         // 首先尝试用哈希值查找
-        let response = await notion.databases.query({
-            database_id: databaseId,
-            filter: {
-                property: 'HTML哈希值',
-                rich_text: {
-                    equals: hash
-                }
-            }
-        });
+        let { data: pages, error } = await supabase
+            .from('html_deployer_pages')
+            .select('*')
+            .eq('html_hash', hash);
+        
+        if (error) throw error;
         
         // 如果没找到，尝试用标题生成哈希值查找
-        if (response.results.length === 0) {
+        if (pages.length === 0) {
             const titleHash = generateHashFromTitle(decodeURIComponent(hash));
-            response = await notion.databases.query({
-                database_id: databaseId,
-                filter: {
-                    property: 'HTML哈希值',
-                    rich_text: {
-                        equals: titleHash
-                    }
-                }
-            });
+            const { data: titlePages, error: titleError } = await supabase
+                .from('html_deployer_pages')
+                .select('*')
+                .eq('html_hash', titleHash);
+            
+            if (titleError) throw titleError;
+            pages = titlePages;
         }
         
-        if (response.results.length === 0) {
+        if (pages.length === 0) {
             return res.status(404).send(`
                 <!DOCTYPE html>
                 <html lang="zh-CN">
@@ -777,59 +446,8 @@ app.get('/view/:hash', async (req, res) => {
             `);
         }
         
-        const page = response.results[0];
-        let htmlContent = '';
-        
-        // 1. 优先从页面正文中获取HTML内容
-        try {
-            const pageContent = await notion.blocks.children.list({
-                block_id: page.id
-            });
-            
-            // 合并所有文本内容作为HTML
-            const contentParts = [];
-            let foundHtmlSection = false;
-            
-            for (const block of pageContent.results) {
-                // 跳过标题，查找段落内容
-                if (block.type === 'heading_3' && block.heading_3) {
-                    const headingText = block.heading_3.rich_text[0]?.plain_text || '';
-                    if (headingText === 'HTML内容') {
-                        foundHtmlSection = true;
-                        continue;
-                    }
-                }
-                
-                // 在HTML内容区域中收集段落
-                if (foundHtmlSection && block.type === 'paragraph' && block.paragraph) {
-                    const text = block.paragraph.rich_text[0]?.plain_text || '';
-                    if (text) {
-                        contentParts.push(text);
-                    }
-                }
-                
-                // 兼容旧的代码块格式
-                if (block.type === 'code' && block.code) {
-                    contentParts.push(block.code.rich_text[0]?.plain_text || '');
-                }
-            }
-            
-            if (contentParts.length > 0) {
-                htmlContent = contentParts.join('');
-                console.log(`从页面正文读取到HTML内容，总长度: ${htmlContent.length}`);
-            }
-        } catch (contentError) {
-            console.log('页面正文读取失败，尝试字段读取');
-        }
-        
-        // 2. 如果没有从正文获取到内容，从属性字段中获取
-        if (!htmlContent) {
-            if (page.properties['完整HTML内容']) {
-                htmlContent = page.properties['完整HTML内容']?.rich_text[0]?.plain_text || '';
-            } else if (page.properties['HTML代码']) {
-                htmlContent = page.properties['HTML代码']?.rich_text[0]?.plain_text || '';
-            }
-        }
+        const page = pages[0];
+        const htmlContent = page.html_content;
         
         if (!htmlContent) {
             return res.status(404).send(`
@@ -846,7 +464,7 @@ app.get('/view/:hash', async (req, res) => {
                 </head>
                 <body>
                     <h1 class="warning">页面内容为空</h1>
-                    <p>请检查Notion页面是否包含HTML内容。</p>
+                    <p>请检查数据库页面是否包含HTML内容。</p>
                 </body>
                 </html>
             `);
@@ -867,4 +485,5 @@ app.get('/favicon.ico', (req, res) => {
 // 启动服务器
 app.listen(port, () => {
     console.log(`服务器正在 http://localhost:${port} 运行`);
+    console.log(`Supabase连接状态: ${supabaseUrl ? '已配置' : '未配置'}`);
 });
