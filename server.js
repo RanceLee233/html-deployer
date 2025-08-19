@@ -248,6 +248,102 @@ app.post('/api/deployments/order', async (req, res) => {
     }
 });
 
+// 批量更新分享链接为自定义域名
+app.post('/api/deployments/update-share-urls', async (req, res) => {
+    try {
+        const customDomain = process.env.CUSTOM_DOMAIN;
+        if (!customDomain) {
+            return res.status(400).json({ 
+                error: '未配置自定义域名环境变量 CUSTOM_DOMAIN' 
+            });
+        }
+
+        // 获取所有页面
+        const response = await notion.databases.query({
+            database_id: databaseId,
+        });
+
+        const results = [];
+        let updatedCount = 0;
+
+        for (const page of response.results) {
+            try {
+                const properties = page.properties;
+                const htmlHash = properties['HTML哈希值']?.rich_text[0]?.plain_text;
+                const currentShareUrl = properties['分享链接']?.rich_text[0]?.plain_text;
+                
+                if (htmlHash) {
+                    const newShareUrl = `${customDomain}/view/${htmlHash}`;
+                    
+                    // 只有当链接确实需要更新时才更新
+                    if (currentShareUrl !== newShareUrl) {
+                        await notion.pages.update({
+                            page_id: page.id,
+                            properties: {
+                                '分享链接': {
+                                    rich_text: [
+                                        {
+                                            text: {
+                                                content: newShareUrl,
+                                            },
+                                        },
+                                    ],
+                                },
+                            },
+                        });
+                        
+                        updatedCount++;
+                        results.push({
+                            id: page.id,
+                            title: properties.页面标题?.title[0]?.plain_text || '无标题',
+                            oldUrl: currentShareUrl,
+                            newUrl: newShareUrl,
+                            success: true
+                        });
+                    } else {
+                        results.push({
+                            id: page.id,
+                            title: properties.页面标题?.title[0]?.plain_text || '无标题',
+                            skipped: true,
+                            reason: '链接已经是正确的域名'
+                        });
+                    }
+                } else {
+                    results.push({
+                        id: page.id,
+                        title: properties.页面标题?.title[0]?.plain_text || '无标题',
+                        skipped: true,
+                        reason: '页面没有哈希值'
+                    });
+                }
+            } catch (error) {
+                results.push({
+                    id: page.id,
+                    title: page.properties.页面标题?.title[0]?.plain_text || '无标题',
+                    success: false,
+                    error: error.message
+                });
+            }
+        }
+
+        res.json({
+            success: true,
+            message: `成功更新 ${updatedCount} 个页面的分享链接`,
+            customDomain: customDomain,
+            totalPages: response.results.length,
+            updatedCount: updatedCount,
+            results: results
+        });
+
+    } catch (error) {
+        console.error('批量更新分享链接失败:', error);
+        res.status(500).json({ 
+            error: '批量更新分享链接失败', 
+            details: error.message 
+        });
+    }
+});
+
 // 2. 创建一个新页面
 app.post('/api/deploy', async (req, res) => {
     const { title, htmlContent, description } = req.body;
@@ -262,7 +358,29 @@ app.post('/api/deploy', async (req, res) => {
         
         // 生成唯一页面ID和分享URL
         const pageId = Date.now().toString(36) + Math.random().toString(36).substr(2);
-        const shareUrl = `${req.protocol}://${req.get('host')}/view/${htmlHash}`;
+        
+        // 使用自定义域名或当前域名生成分享URL
+        const customDomain = process.env.CUSTOM_DOMAIN;
+        const baseUrl = customDomain || `${req.protocol}://${req.get('host')}`;
+        const shareUrl = `${baseUrl}/view/${htmlHash}`;
+        
+        // 查询现有页面的最小排序值，新页面排在最前面
+        let newSortValue = 5; // 默认值
+        try {
+            const existingPages = await notion.databases.query({
+                database_id: databaseId,
+                sorts: [{ property: '排序', direction: 'ascending' }],
+                page_size: 1
+            });
+            
+            if (existingPages.results.length > 0) {
+                const firstPage = existingPages.results[0];
+                const currentMinSort = firstPage.properties['排序']?.number || 10;
+                newSortValue = Math.max(1, currentMinSort - 5); // 确保新页面排在最前面
+            }
+        } catch (sortError) {
+            console.log('获取排序值失败，使用默认值:', sortError.message);
+        }
         
 // 获取数据库结构以确定使用哪种字段
         const database = await notion.databases.retrieve({
@@ -320,6 +438,10 @@ app.post('/api/deploy', async (req, res) => {
                         },
                     },
                 ],
+            };
+            // 添加排序值，让新页面排在最前面
+            properties['排序'] = {
+                number: newSortValue,
             };
         } else {
             // 旧架构：使用HTML代码字段（截断处理）
